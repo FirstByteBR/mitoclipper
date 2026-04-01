@@ -90,8 +90,6 @@ pyrightconfig.json
 # Virtualenv (this repo uses clipenv; generic names already covered above)
 clipenv/
 
-.github
-
 # Pipeline outputs: videos, audio, transcripts, rendered clips (do not commit binaries)
 data/
 
