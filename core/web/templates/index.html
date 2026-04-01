@@ -1,81 +1,96 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="hero-section">
-  <h1>MitoClipper</h1>
-  <p>Transform long videos into viral short clips with AI-powered analysis</p>
+<div class="dashboard-intro">
+  <h1>MitoClipper Control Center</h1>
+  <p class="lead">High-performance clip extraction pipeline. Monitor, run and ship clip sets with one interface.</p>
 </div>
 
-<div class="row justify-content-center">
-  <div class="col-lg-8">
-    <div class="card status-card">
-      <div class="card-body">
-        <h2 class="card-title">Start New Pipeline</h2>
-        <p class="card-text">Enter a YouTube URL or local video path to generate viral clip candidates.</p>
+<div class="row gx-4 gy-4">
+  <div class="col-lg-7">
+    <div class="dashboard-card" id="pipeline-panel">
+      <h2>Start new run</h2>
+      <form method="post" action="{{ url_for('start_pipeline') }}" class="row g-3">
+        <div class="col-12">
+          <label class="form-label" for="url">Video source</label>
+          <input id="url" name="url" class="form-control" required value="{{ state.current_video or '' }}" placeholder="URL or local path" />
+        </div>
+        <div class="col-md-6"><label class="form-label" for="top_k">Clip count</label><input id="top_k" name="top_k" type="number" min="1" max="15" value="4" class="form-control" /></div>
+        <div class="col-md-6"><label class="form-label" for="max_duration">Max length (s)</label><input id="max_duration" name="max_duration" type="number" min="15" max="300" value="60" class="form-control" /></div>
 
-        <form method="post" action="{{ url_for('start_pipeline') }}" class="row g-3">
-          <div class="col-12">
-            <label for="url" class="form-label">Video URL or Local Path</label>
-            <input id="url" name="url" class="form-control" required value="{{ state.current_video or '' }}" placeholder="https://youtu.be/... or /path/to/video.mp4" />
+        <div class="col-12 d-flex flex-wrap gap-2">
+          <div class="form-check form-switch">
+            <input class="form-check-input" id="vertical" name="vertical" type="checkbox" checked>
+            <label class="form-check-label" for="vertical">Vertical 9:16</label>
           </div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" id="face_tracking" name="face_tracking" type="checkbox" checked>
+            <label class="form-check-label" for="face_tracking">Face tracking</label>
+          </div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" id="use_heatmap" name="use_heatmap" type="checkbox" checked>
+            <label class="form-check-label" for="use_heatmap">Use YouTube heatmap in analysis</label>
+          </div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" id="auto_upload" name="auto_upload" type="checkbox">
+            <label class="form-check-label" for="auto_upload">Auto-publish YouTube clips</label>
+          </div>
+        </div>
 
-          <div class="col-md-3">
-            <label class="form-label">Top K Clips</label>
-            <input name="top_k" type="number" min="1" max="10" value="4" class="form-control" />
+        <div class="col-12">
+          <button class="btn btn-sm btn-outline-light" type="button" data-bs-toggle="collapse" data-bs-target="#advanced-options">Advanced options</button>
+          <div class="collapse mt-3" id="advanced-options">
+            <div class="card bg-contrast p-3" style="border:1px solid rgba(255,255,255,0.1)">
+              <div class="row g-3">
+                <div class="col-md-6"><label class="form-label" for="min_clip_duration">Min duration</label><input id="min_clip_duration" name="min_clip_duration" type="number" step="0.5" required value="15.0" class="form-control" /></div>
+                <div class="col-md-6"><label class="form-label" for="target_clip_duration">Target duration</label><input id="target_clip_duration" name="target_clip_duration" type="number" step="0.5" required value="35.0" class="form-control" /></div>
+                <div class="col-12"><label class="form-label" for="cookies">Cookies file</label><input id="cookies" name="cookies" class="form-control" placeholder="~/.config/yt-dlp/cookies.txt" /></div>
+                <div class="col-12"><label class="form-label" for="cookies_from_browser">Browser cookie source</label><input id="cookies_from_browser" name="cookies_from_browser" class="form-control" placeholder="chrome, firefox" /></div>
+              </div>
+            </div>
           </div>
-          <div class="col-md-3">
-            <label class="form-label">Max Duration (s)</label>
-            <input name="max_duration" type="number" min="15" max="180" value="60" class="form-control" />
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Min Clip Duration (s)</label>
-            <input name="min_clip_duration" type="number" step="0.5" value="15.0" class="form-control" />
-          </div>
-          <div class="col-md-3">
-            <label class="form-label">Target Clip Duration (s)</label>
-            <input name="target_clip_duration" type="number" step="0.5" value="35.0" class="form-control" />
-          </div>
+        </div>
 
-          <div class="col-md-6 form-check form-switch">
-            <input class="form-check-input" type="checkbox" id="vertical" name="vertical" checked>
-            <label class="form-check-label" for="vertical">Vertical crop (9:16)</label>
-          </div>
-          <div class="col-md-6 form-check form-switch">
-            <input class="form-check-input" type="checkbox" id="face_tracking" name="face_tracking" checked>
-            <label class="form-check-label" for="face_tracking">Face tracking bias</label>
-          </div>
+        <div class="col-12 text-end mt-2">
+          <button type="submit" class="btn btn-submit">Run pipeline</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
-          <div class="col-12">
-            <label class="form-label">Cookies File (optional)</label>
-            <input name="cookies" class="form-control" placeholder="~/.config/yt-dlp/cookies.txt" />
-          </div>
-          <div class="col-12">
-            <label class="form-label">Cookies from Browser (optional)</label>
-            <input name="cookies_from_browser" class="form-control" placeholder="chrome, firefox" />
-          </div>
+  <div class="col-lg-5">
+    <div class="dashboard-card" id="live-status-card">
+      <h2>Live pipeline status</h2>
+      <div class="status-line"><strong>State:</strong> <span class="badge badge-{{ state.status }}">{{ state.status or 'idle' }}</span></div>
+      <div class="status-line"><strong>Video:</strong> {{ state.current_video or 'none' }}</div>
+      <div class="status-line"><strong>Last error:</strong> <span class="text-danger">{{ state.last_error or 'none' }}</span></div>
 
-          <div class="col-12">
-            <button type="submit" class="btn btn-success btn-lg">🚀 Start Pipeline</button>
-            <a href="{{ url_for('status') }}" class="btn btn-primary ms-2">📊 Check Status</a>
-          </div>
-        </form>
-      </div>
+      {% if state.steps %}
+        <div class="progress-bar-wrapper" aria-label="pipeline progress">
+          {% set completed = state.steps.values() | select | list | length %}
+          {% set total = state.steps | length %}
+          {% set percentage = (completed / total * 100) | round(0) %}
+          <div class="progress"><div class="progress-fill" style="width: {{ percentage }}%">{{ percentage }}%</div></div>
+        </div>
+        <ul class="compact-step-list">
+          {% for key, done in state.steps.items() %}
+            <li class="step-item {{ 'done' if done else 'pending' }}"><span>{{ key.replace('_',' ').title() }}</span><small>{{ 'Done' if done else 'Pending' }}</small></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      <p class="small text-muted">Auto-refresh every 8s while running.</p>
     </div>
 
     {% if recent_result %}
-    <div class="card status-card">
-      <div class="card-header">
-        <h5>Last Run Summary</h5>
+      <div class="dashboard-card" id="recent-result">
+        <h2>Latest result</h2>
+        <p><strong>Source:</strong> {{ recent_result.video_path }}</p>
+        <p><strong>Duration:</strong> {{ recent_result.video_duration_sec }}s</p>
+        <p><strong>Clips:</strong> {{ recent_result.clips|length }}</p>
+        <a class="btn btn-outline-light" href="{{ url_for('browse_clips') }}">Open Clips</a>
       </div>
-      <div class="card-body">
-        <ul class="list-unstyled">
-          <li><strong>Video:</strong> {{ recent_result.video_path }}</li>
-          <li><strong>Duration:</strong> {{ recent_result.video_duration_sec }} seconds</li>
-          <li><strong>Clips Generated:</strong> {{ recent_result.clips|length }}</li>
-          <li><a href="{{ url_for('browse_clips') }}" class="btn btn-outline-primary">🎥 Browse Clips</a></li>
-        </ul>
-      </div>
-    </div>
     {% endif %}
   </div>
 </div>
+
 {% endblock %}
+

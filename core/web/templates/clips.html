@@ -1,71 +1,112 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="hero-section">
-  <h1>Generated Clips</h1>
-  <p>Preview and download your viral clip candidates</p>
+<div class="dashboard-intro">
+  <h1>Clip Gallery</h1>
+  <p class="lead">Review all generated clips, preview and download with one click.</p>
 </div>
 
-<div class="row justify-content-center">
-  <div class="col-lg-10">
-    {% if not files %}
-      <div class="card status-card">
-        <div class="card-body text-center">
-          <h5 class="card-title">No Clips Yet</h5>
-          <p class="card-text">Run the pipeline first to generate clips.</p>
-          <a href="{{ url_for('index') }}" class="btn btn-primary">🚀 Start Pipeline</a>
-        </div>
-      </div>
-    {% else %}
-      <div class="row gy-4">
-        {% for name in files %}
-          <div class="col-md-6 col-lg-4">
-            <div class="card h-100 shadow-sm">
-              <div class="video-preview">
-                <video class="card-img-top" controls preload="metadata" style="height: 240px; object-fit: cover;">
-                  <source src="{{ url_for('clip_file', filename=name) }}" type="video/mp4" />
-                  Your browser does not support the video tag.
-                </video>
-              </div>
-              <div class="card-body">
-                <h5 class="card-title">{{ name }}</h5>
-                <p class="card-text small text-muted">Generated clip ready for download</p>
-                <a href="{{ url_for('clip_file', filename=name) }}" class="btn btn-success btn-sm" download>📥 Download</a>
-              </div>
+{% if not files %}
+  <div class="alert alert-info">No clips found. Run the pipeline first at <a href="{{ url_for('index') }}">Dashboard</a>.</div>
+{% else %}
+  <div class="clip-player-shell mb-4">
+    <h2 id="player-title">{{ files[0] }}</h2>
+    <video id="main-clip-player" controls playsinline muted class="main-video" preload="metadata">
+      <source id="main-clip-source" src="{{ url_for('clip_file', filename=files[0]) }}" type="video/mp4" />
+      Your browser does not support HTML5 video.
+    </video>
+    <div id="player-warning" class="video-warning d-none">Playback error: this clip cannot be played inline in your browser. Try downloading using the button below.</div>
+    <div class="mt-2 text-end">
+      <a id="download-current" class="btn btn-outline-light btn-sm" href="{{ url_for('clip_file', filename=files[0]) }}" download>Download Current Clip</a>
+    </div>
+  </div>
+
+  <div class="mb-4 text-center">
+    <button id="generate-metadata-btn" class="btn btn-submit">Generate Catchy Titles & Descriptions</button>
+    <button id="publish-youtube-btn" class="btn btn-primary ms-2">Publish Clips to YouTube</button>
+    <button class="btn btn-outline-light" data-bs-toggle="modal" data-bs-target="#youtubeModal">View YouTube-Ready Pack</button>
+  </div>
+  <div id="metadata-results" class="alert alert-secondary d-none"></div>
+  <div id="youtube-publish-results" class="alert alert-info d-none"></div>
+
+  <div class="row g-3 clip-grid">
+    {% for name in files %}
+      <div class="col-sm-6 col-md-4 col-lg-3">
+        <div class="clip-card" data-src="{{ url_for('clip_file', filename=name) }}" data-name="{{ name }}">
+          <div class="clip-preview ratio ratio-16x9">
+            <video class="mini-player" muted preload="metadata" poster="" onerror="this.style.display='none'">
+              <source src="{{ url_for('clip_file', filename=name) }}" type="video/mp4" />
+            </video>
+          </div>
+          <div class="clip-info">
+            <span class="clip-name">{{ name }}</span>
+            <div class="clip-actions">
+              <a class="btn btn-link btn-sm" href="{{ url_for('clip_file', filename=name) }}" download>Download</a>
+              <button class="btn btn-link btn-sm btn-rename" data-name="{{ name }}">Rename</button>
+              <button class="btn btn-link btn-sm btn-delete" data-name="{{ name }}">Delete</button>
             </div>
           </div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    {% if viral_segments %}
-      <div class="card status-card mt-4">
-        <div class="card-header">
-          <h5>Viral Segment Metadata</h5>
-        </div>
-        <div class="card-body">
-          <div class="table-responsive">
-            <table class="table table-sm table-striped">
-              <thead>
-                <tr><th>#</th><th>Start (s)</th><th>End (s)</th><th>Score</th></tr>
-              </thead>
-              <tbody>
-                {% for seg in viral_segments %}
-                  <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ "%.1f"|format(seg.start) }}</td>
-                    <td>{{ "%.1f"|format(seg.end) }}</td>
-                    <td>{{ (seg.viral_score or 0)|round(3) }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          <p class="text-muted small mt-2">💡 Clip names match segment order (e.g., 1A, 1B...).</p>
         </div>
       </div>
-    {% endif %}
+    {% endfor %}
   </div>
-</div>
 
-<p class="text-center mt-4"><a href="{{ url_for('status') }}" class="btn btn-outline-secondary">📊 Back to Status</a></p>
+  {% if viral_segments %}
+    <div class="mt-4 text-center">
+      <button class="btn btn-outline-light" data-bs-toggle="modal" data-bs-target="#metadataModal">View segment metadata</button>
+    </div>
+
+    <div class="modal fade" id="metadataModal" tabindex="-1">
+      <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Viral segment details</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="table-responsive">
+              <table class="table table-dark table-striped table-sm">
+                <thead>
+                  <tr><th>#</th><th>Start</th><th>End</th><th>Viral Score</th><th>Emotion</th><th>Prosody</th><th>Hooks</th></tr>
+                </thead>
+                <tbody>
+                  {% for seg in viral_segments %}
+                    <tr>
+                      <td>{{ loop.index }}</td>
+                      <td>{{ "%.1f"|format(seg.start) }}</td>
+                      <td>{{ "%.1f"|format(seg.end) }}</td>
+                      <td><strong>{{ (seg.viral_score or 0)|round(3) }}</strong></td>
+                      <td>{{ (seg.emotion_intensity or 0)|round(2) }}</td>
+                      <td>{{ (seg.prosody_variation or 0)|round(2) }}</td>
+                      <td>{{ (seg.hook_strength or 0)|round(2) }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <p class="text-muted small">Clip names correspond to segment order (1A, 1B, etc). Multiple scoring dimensions combined: viral_score = 0.25×semantic + 0.15×emotion + 0.15×prosody + 0.15×hook + 0.30×position.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal fade" id="youtubeModal" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">YouTube-Ready Clip Pack</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body" id="youtube-pack-body">
+            <p class="text-muted">Loading...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+{% endif %}
+
+<div class="mt-4 text-center">
+  <a href="{{ url_for('status') }}" class="btn btn-primary">Back to Pipeline</a>
+</div>
 {% endblock %}
+

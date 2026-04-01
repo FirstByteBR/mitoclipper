@@ -1,7 +1,10 @@
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timedelta
+
+from core.logging_config import logger
 
 # Same hook lexicon as analysis (for subtitle emphasis)
 HOOK_WORDS = {
@@ -45,6 +48,74 @@ def _word_key(w):
 
 def _is_hook_word(word):
     return _word_key(word) in HOOK_WORDS
+
+
+def upload_clips_to_youtube(clip_paths, metadata_entries, privacy="unlisted", dry_run=False):
+    """Upload clips using youtube-upload CLI.
+
+    Requires `youtube-upload` command to be available on PATH and already
+    authenticated with Google OAuth credentials.
+    """
+    if not clip_paths:
+        return []
+
+    if shutil.which("youtube-upload") is None:
+        raise RuntimeError(
+            "youtube-upload CLI not found. Install it (pip install youtube-upload) "
+            "and configure OAuth credentials before using auto-upload."
+        )
+
+    uploads = []
+    for i, clip_path in enumerate(clip_paths):
+        if not os.path.exists(clip_path):
+            raise FileNotFoundError(f"Clip not found: {clip_path}")
+
+        title = "MitoClipper Highlight"
+        description = "Generated with MitoClipper."
+        if i < len(metadata_entries):
+            meta = metadata_entries[i]
+            title = meta.get("title") or title
+            description = meta.get("description") or description
+
+        if dry_run:
+            uploads.append({"clip": clip_path, "title": title, "description": description, "status": "dry_run"})
+            continue
+
+        cmd = [
+            "youtube-upload",
+            "--title",
+            title,
+            "--description",
+            description,
+            "--privacy",
+            privacy,
+            clip_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        status = "success" if result.returncode == 0 else "failed"
+        published_url = None
+        if result.stdout:
+            m = re.search(r"https?://[^\s]+", result.stdout)
+            if m:
+                published_url = m.group(0)
+
+        uploads.append(
+            {
+                "clip": clip_path,
+                "title": title,
+                "description": description,
+                "status": status,
+                "stdout": result.stdout.strip(),
+                "stderr": result.stderr.strip(),
+                "published_url": published_url,
+            }
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"Upload failed for {clip_path}: {result.stderr.strip()}")
+
+    return uploads
 
 
 def _sanitize_ass_text(text):
@@ -210,6 +281,13 @@ def _segmentos_no_intervalo(segmentos, start, end):
 
 
 def gerar_clips(video, cortes, segmentos, vertical=True, face_tracking=True):
+    logger.info(
+        "Generating clips: video=%s, cortes=%d, vertical=%s, face_tracking=%s",
+        video,
+        len(cortes) if cortes else 0,
+        vertical,
+        face_tracking,
+    )
     pasta = "data/clips"
     pasta_sub = "data/subtitles"
     os.makedirs(pasta, exist_ok=True)
@@ -277,4 +355,5 @@ def gerar_clips(video, cortes, segmentos, vertical=True, face_tracking=True):
             }
         )
 
+    logger.info("Generated %d clip outputs", len(outputs))
     return outputs

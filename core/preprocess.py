@@ -7,6 +7,8 @@ import requests
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, ExtractorError
 
+from core.logging_config import logger
+
 from core.models import get_whisper
 
 _YOUTUBE_FORMAT_HELP = (
@@ -59,7 +61,7 @@ def get_heatmap(video_id):
                 # heat_map is list of {'time': seconds, 'heat': intensity 0-1}
                 return heat_map
     except Exception as e:
-        print(f"Failed to get heatmap: {e}")
+        logger.warning("Failed to get heatmap: %s", e, exc_info=True)
     return None
 
 
@@ -160,12 +162,14 @@ def _download_sequences():
     return with_cookie, no_cookie
 
 
-def baixar_video(url, cookies_file=None, cookies_from_browser=None):
+def baixar_video(url, cookies_file=None, cookies_from_browser=None, use_heatmap=True):
+    logger.info("Starting video download: url=%s", url)
     os.makedirs("data/downloads", exist_ok=True)
 
     ok, local = _is_local_video_path(url)
     if ok:
-        return {"info": {"id": os.path.splitext(os.path.basename(local))[0]}, "video_path": local, "cached": True}
+        logger.info("Using local video path: %s", local)
+        return {"info": {"id": os.path.splitext(os.path.basename(local))[0]}, "video_path": local, "cached": True, "heatmap": None}
 
     cookie_opts = _yt_dlp_cookie_opts(cookies_file, cookies_from_browser)
 
@@ -211,7 +215,8 @@ def baixar_video(url, cookies_file=None, cookies_from_browser=None):
                         if os.path.exists(alt):
                             video_path = alt
                             break
-                heatmap = get_heatmap(video_id)
+                heatmap = get_heatmap(video_id) if use_heatmap else None
+                logger.info("Downloaded video using yt-dlp, path=%s", video_path)
                 return {"info": info, "video_path": video_path, "cached": False, "heatmap": heatmap}
             except (DownloadError, ExtractorError) as e:
                 last_err = e
@@ -223,6 +228,7 @@ def baixar_video(url, cookies_file=None, cookies_from_browser=None):
 
 
 def extrair_audio(video_path):
+    logger.info("Extracting audio from video %s", video_path)
     os.makedirs("data/audio", exist_ok=True)
 
     audio = "data/audio/audio.wav"
@@ -238,15 +244,17 @@ def extrair_audio(video_path):
     ]
 
     subprocess.run(cmd, check=True)
-
+    logger.info("Audio extracted to %s", audio)
     return audio
 
 
 def transcrever(audio_path):
+    logger.info("Transcribing audio %s", audio_path)
     result = get_whisper().transcribe(
         audio_path,
         task="transcribe",
         word_timestamps=True,
     )
-
-    return result["segments"]
+    segments = result.get("segments", [])
+    logger.info("Transcription complete: %d segments", len(segments))
+    return segments

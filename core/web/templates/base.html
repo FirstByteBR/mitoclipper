@@ -3,39 +3,41 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MitoClipper - Viral Clip Generator</title>
+  <meta name="theme-color" content="#043f5f" />
+  <title>MitoClipper v2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" integrity="sha512-b2QcS5SsA8tZodcDtGRELiGv5SaKSk1vDHDaQRda0htPYWZ6046lr3kJ5bAAQdpV2mmA/4v0wQF9MyU6/pDfltQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='grad' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' style='stop-color:%2300d4ff'/><stop offset='100%' style='stop-color:%230099cc'/></linearGradient></defs><circle cx='50' cy='50' r='45' fill='url(%23grad)'/><text x='50' y='65' text-anchor='middle' fill='white' font-size='50' font-family='Arial'>🎬</text></svg>">
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark">
-  <div class="container-fluid">
-    <a class="navbar-brand" href="{{ url_for('index') }}">🎬 MitoClipper</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarNav">
-      <ul class="navbar-nav ms-auto">
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('index') }}">Home</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('status') }}">Status</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('browse_clips') }}">Browse Clips</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('reset_state') }}">Reset</a></li>
-      </ul>
-    </div>
+<header class="masthead">
+  <div class="container d-flex align-items-center justify-content-between">
+    <a class="brand" href="{{ url_for('index') }}">MitoClipper</a>
+    <nav class="nav-links">
+      <a class="nav-link" href="{{ url_for('index') }}">Dashboard</a>
+      <a class="nav-link" href="{{ url_for('status') }}">Pipeline</a>
+      <a class="nav-link" href="{{ url_for('browse_clips') }}">Clips</a>
+      <a class="nav-link" href="{{ url_for('reset_state') }}">Reset</a>
+    </nav>
   </div>
-</nav>
-<div class="container mt-4">
+</header>
+<main class="container py-4">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for category, msg in messages %}
-        <div class="alert alert-{{ category }}" role="alert">{{ msg }}</div>
+        <div class="alert alert-{{ category }} my-3" role="alert">{{ msg }}</div>
       {% endfor %}
     {% endif %}
   {% endwith %}
-
   {% block content %}{% endblock %}
-</div>
+</main>
+<footer class="footer px-4 py-3 text-center">
+  <small>FirstByteBR style UI rebuild • MitoClipper 2026</small>
+</footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-OERcA2m/IGfv/r1MROm/tLUFQ5h8m2QygZWpRLxNB5Nx5Tzl6hz0L2ELY1d6bc7j" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

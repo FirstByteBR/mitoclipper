@@ -24,3 +24,11 @@ A tool to download YouTube videos, transcribe them, analyze for viral moments, a
 Clips are saved in `data/clips/`, subtitles in `data/subtitles/`, transcripts in `data/transcripts/`.
 
 The `data/` folder is gitignored as it contains generated files.
+
+## Instrumentation
+
+- Logs are written to `data/logs/mitoclipper.log` and stdout via `core/logging_config.py`.
+- Metrics are exposed via:
+  - `/api/result` (includes `metrics` with last run summary)
+  - `/api/metrics` (direct metrics endpoint)
+- Metrics file: `data/transcripts/pipeline_metrics.json`.

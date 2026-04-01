@@ -1,7 +1,11 @@
+import json
+import re
+
 import numpy as np
 import librosa
 from sklearn.metrics.pairwise import cosine_similarity
 from core.models import get_embeddings, get_emotion, get_llm
+from core.logging_config import logger
 
 
 HOOK_KEYWORDS = {
@@ -203,7 +207,15 @@ def detectar_momentos_virais(
     target_clip_duration=35.0,
     heatmap=None,
 ):
+    logger.info(
+        "Starting viral moment detection: top_k=%s, max_duration=%s, min_clip_duration=%s, target_clip_duration=%s",
+        top_k,
+        max_duration,
+        min_clip_duration,
+        target_clip_duration,
+    )
     if not segmentos:
+        logger.warning("No segments provided to detectar_momentos_virais")
         return []
 
     semantic = _semantic_novelty_scores(segmentos)
@@ -264,6 +276,7 @@ def detectar_momentos_virais(
         target_duration=target_clip_duration,
         max_duration=max_duration,
     )
+    logger.info("Viral moment detection complete: selected %d clips", len(selected))
     return selected
 
 
@@ -308,6 +321,7 @@ def _transcript_for_clips(segmentos, top_clips, margin_sec=15.0, max_chars=18000
 
 
 def gerar_metadados(segmentos, top_clips):
+    logger.info("Generating metadata for %d clips", len(top_clips) if top_clips else 0)
     texto = _transcript_for_clips(segmentos, top_clips)
 
     clips = "\n".join(
@@ -351,5 +365,40 @@ Transcript (relevant excerpts):
         return_full_text=False,
     )
     if isinstance(out, list) and out:
-        return out[0].get("generated_text", "")
-    return str(out)
+        generated = out[0].get("generated_text", "")
+        logger.info("Metadata generated, length=%d", len(generated))
+        return generated
+    generated = str(out)
+    logger.info("Metadata generated (fallback), length=%d", len(generated))
+    return generated
+
+
+def parse_generated_metadata(raw_text):
+    if not raw_text:
+        return []
+    if isinstance(raw_text, (list, dict)):
+        return raw_text
+
+    text = raw_text.strip()
+    # Direct JSON
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return parsed
+    except Exception:
+        pass
+
+    # Try to extract first JSON array block inside text
+    bracket_match = re.search(r"(\[.*\])", text, re.S)
+    if bracket_match:
+        candidate = bracket_match.group(1)
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+
+    # Fallback: empty
+    logger.warning("Could not parse generated metadata JSON; returning empty list")
+    return []
