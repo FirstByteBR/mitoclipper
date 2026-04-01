@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="hero-section">
+  <h1>Generated Clips</h1>
+  <p>Preview and download your viral clip candidates</p>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    {% if not files %}
+      <div class="card status-card">
+        <div class="card-body text-center">
+          <h5 class="card-title">No Clips Yet</h5>
+          <p class="card-text">Run the pipeline first to generate clips.</p>
+          <a href="{{ url_for('index') }}" class="btn btn-primary">🚀 Start Pipeline</a>
+        </div>
+      </div>
+    {% else %}
+      <div class="row gy-4">
+        {% for name in files %}
+          <div class="col-md-6 col-lg-4">
+            <div class="card h-100 shadow-sm">
+              <div class="video-preview">
+                <video class="card-img-top" controls preload="metadata" style="height: 240px; object-fit: cover;">
+                  <source src="{{ url_for('clip_file', filename=name) }}" type="video/mp4" />
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+              <div class="card-body">
+                <h5 class="card-title">{{ name }}</h5>
+                <p class="card-text small text-muted">Generated clip ready for download</p>
+                <a href="{{ url_for('clip_file', filename=name) }}" class="btn btn-success btn-sm" download>📥 Download</a>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if viral_segments %}
+      <div class="card status-card mt-4">
+        <div class="card-header">
+          <h5>Viral Segment Metadata</h5>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm table-striped">
+              <thead>
+                <tr><th>#</th><th>Start (s)</th><th>End (s)</th><th>Score</th></tr>
+              </thead>
+              <tbody>
+                {% for seg in viral_segments %}
+                  <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ "%.1f"|format(seg.start) }}</td>
+                    <td>{{ "%.1f"|format(seg.end) }}</td>
+                    <td>{{ (seg.viral_score or 0)|round(3) }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <p class="text-muted small mt-2">💡 Clip names match segment order (e.g., 1A, 1B...).</p>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<p class="text-center mt-4"><a href="{{ url_for('status') }}" class="btn btn-outline-secondary">📊 Back to Status</a></p>
+{% endblock %}

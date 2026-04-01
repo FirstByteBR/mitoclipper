@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h1>Pipeline Status</h1>
+
+  <p><strong>State:</strong> {{ state.status }}</p>
+  <p><strong>Current video:</strong> {{ state.current_video or 'None' }}</p>
+  <p><strong>Last error:</strong> {{ state.last_error or 'None' }}</p>
+
+  <h2>Steps progress</h2>
+  <div class="row g-2">
+    {% for k,v in state.steps.items() %}
+      <div class="col-auto">
+        <span class="badge bg-{{ 'success' if v else 'secondary' }}">{{ k }}: {{ 'done' if v else 'pending' }}</span>
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if result %}
+    <hr />
+    <h2>Last result</h2>
+    <p><strong>Clips generated:</strong> {{ result.clips|length }}</p>
+    <p><a href="{{ url_for('browse_clips') }}" class="btn btn-primary">Browse clips</a></p>
+  {% endif %}
+
+  <hr />
+  <p><a href="{{ url_for('index') }}" class="btn btn-outline-primary">Back to start</a></p>
+  <p><em>Auto-refresh may help for long runs.</em></p>
+  <script>
+    setTimeout(() => window.location.reload(), 8000);
+  </script>
+{% endblock %}

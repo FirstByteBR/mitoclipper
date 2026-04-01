@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="hero-section">
+  <h1>Pipeline Status</h1>
+  <p>Monitor your clip generation progress in real-time</p>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card status-card">
+      <div class="card-body">
+        <h5 class="card-title">Current Status</h5>
+        <p><strong>State:</strong> <span class="badge bg-{{ 'warning' if state.status == 'running' else 'success' if state.status == 'done' else 'danger' }}">{{ state.status|title }}</span></p>
+        <p><strong>Current Video:</strong> {{ state.current_video or 'None' }}</p>
+        {% if state.last_error %}
+          <p><strong>Last Error:</strong> <span class="text-danger">{{ state.last_error }}</span></p>
+        {% endif %}
+
+        {% if state.status == 'running' %}
+          <div class="d-flex align-items-center mb-3">
+            <div class="spinner-border text-warning me-2" role="status"><span class="visually-hidden">Running</span></div>
+            <strong>Pipeline is running...</strong>
+          </div>
+        {% elif state.status == 'done' %}
+          <div class="alert alert-success">✅ Pipeline completed successfully!</div>
+        {% elif state.status == 'failed' %}
+          <div class="alert alert-danger">❌ Pipeline failed. Check the error above.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card status-card">
+      <div class="card-header">
+        <h5>Progress Steps</h5>
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+          {% for k,v in state.steps.items() %}
+            <div class="col-auto">
+              <span class="badge bg-{{ 'success' if v else 'secondary' }} fs-6">
+                {{ k|replace('_', ' ')|title }}: {{ '✅' if v else '⏳' }}
+              </span>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    {% if result %}
+    <div class="card status-card">
+      <div class="card-header">
+        <h5>Results</h5>
+      </div>
+      <div class="card-body">
+        <p><strong>Clips Generated:</strong> {{ result.clips|length }}</p>
+        <a href="{{ url_for('browse_clips') }}" class="btn btn-primary">🎥 Browse Clips</a>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<hr />
+<p class="text-center"><a href="{{ url_for('index') }}" class="btn btn-outline-primary">🏠 Back to Home</a></p>
+<p class="text-center text-muted">Page auto-refreshes every 8 seconds while running.</p>
+<script>
+  setTimeout(() => window.location.reload(), 8000);
+</script>
+{% endblock %}

@@ -1,0 +1,109 @@
+# Created by https://www.toptal.com/developers/gitignore/api/python
+# Edit at https://www.toptal.com/developers/gitignore?templates=python
+# Project-specific additions: see bottom (mitoclipper, venv name, data artifacts)
+
+### Python ###
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+# NOTE: generic "downloads/" matches ANY folder named "downloads/" (e.g. data/downloads/).
+# That is usually what you want for large artifacts; pipeline outputs are under data/ below.
+downloads/
+eggs/
+.eggs/
+# WARNING: "lib/" ignores any top-level or nested "lib/" directory. If you add a package
+# named lib/, use: !lib/ or rename the folder.
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+*.mo
+*.pot
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+docs/_build/
+.pybuilder/
+target/
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+__pypackages__/
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.spyderproject
+.spyproject
+.ropeproject
+/site
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+poetry.toml
+.ruff_cache/
+pyrightconfig.json
+
+### mitoclipper / local tooling ###
+# Virtualenv (this repo uses clipenv; generic names already covered above)
+clipenv/
+
+# Pipeline outputs: videos, audio, transcripts, rendered clips (do not commit binaries)
+data/
+
+# IDE / editor (uncomment if you do not want shared workspace settings in git)
+.vscode/
+.cursor/
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Optional: large ML artifacts checked in by mistake ###
+*.pt
+*.pth
+*.onnx
+*.bin
+checkpoints/

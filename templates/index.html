@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h1>MitoClipper Launcher</h1>
+  <p>Enter a video URL or local path and generate viral clip candidates.</p>
+
+  <form method="post" action="{{ url_for('start_pipeline') }}" class="row g-3">
+    <div class="col-12">
+      <label for="url" class="form-label">Video URL or local file path</label>
+      <input id="url" name="url" class="form-control" required value="{{ state.current_video or '' }}" />
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">top_k</label>
+      <input name="top_k" type="number" min="1" max="10" value="4" class="form-control" />
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">max_duration</label>
+      <input name="max_duration" type="number" min="15" max="180" value="60" class="form-control" />
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">min_clip_duration</label>
+      <input name="min_clip_duration" type="number" step="0.5" value="15.0" class="form-control" />
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">target_clip_duration</label>
+      <input name="target_clip_duration" type="number" step="0.5" value="35.0" class="form-control" />
+    </div>
+
+    <div class="col-md-3 form-check form-switch">
+      <input class="form-check-input" type="checkbox" id="vertical" name="vertical" checked>
+      <label class="form-check-label" for="vertical">Vertical crop (9:16)</label>
+    </div>
+    <div class="col-md-3 form-check form-switch">
+      <input class="form-check-input" type="checkbox" id="face_tracking" name="face_tracking" checked>
+      <label class="form-check-label" for="face_tracking">Face tracking bias</label>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label">Cookies file (optional)</label>
+      <input name="cookies" class="form-control" placeholder="~/.config/yt-dlp/cookies.txt" />
+    </div>
+    <div class="col-12">
+      <label class="form-label">Cookies from browser (optional)</label>
+      <input name="cookies_from_browser" class="form-control" placeholder="chrome, firefox" />
+    </div>
+
+    <div class="col-12">
+      <button type="submit" class="btn btn-success">Start pipeline</button>
+      <a href="{{ url_for('status') }}" class="btn btn-primary ms-2">Check status</a>
+    </div>
+  </form>
+
+  <hr />
+
+  <h2>Current status</h2>
+  <p><b>State:</b> {{ state.status }}</p>
+  <p><b>Current video:</b> {{ state.current_video or 'None' }}</p>
+  <p><b>Last error:</b> {{ state.last_error or 'None' }}</p>
+
+  {% if recent_result %}
+    <h2>Last run summary</h2>
+    <ul>
+      <li>Video path: {{ recent_result.video_path }}</li>
+      <li>Duration: {{ recent_result.video_duration_sec }} seconds</li>
+      <li>Clips: {{ recent_result.clips|length }}</li>
+      <li><a href="{{ url_for('browse_clips') }}">Go to clip browser</a></li>
+    </ul>
+  {% endif %}
+{% endblock %}

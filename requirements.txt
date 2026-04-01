@@ -1,0 +1,12 @@
+yt-dlp
+torch
+openai-whisper
+sentence-transformers
+transformers
+librosa
+scikit-learn
+numpy
+opencv-python
+accelerate
+tqdm
+requests

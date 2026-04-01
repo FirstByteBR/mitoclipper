@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="hero-section">
+  <h1>MitoClipper</h1>
+  <p>Transform long videos into viral short clips with AI-powered analysis</p>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card status-card">
+      <div class="card-body">
+        <h2 class="card-title">Start New Pipeline</h2>
+        <p class="card-text">Enter a YouTube URL or local video path to generate viral clip candidates.</p>
+
+        <form method="post" action="{{ url_for('start_pipeline') }}" class="row g-3">
+          <div class="col-12">
+            <label for="url" class="form-label">Video URL or Local Path</label>
+            <input id="url" name="url" class="form-control" required value="{{ state.current_video or '' }}" placeholder="https://youtu.be/... or /path/to/video.mp4" />
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">Top K Clips</label>
+            <input name="top_k" type="number" min="1" max="10" value="4" class="form-control" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Max Duration (s)</label>
+            <input name="max_duration" type="number" min="15" max="180" value="60" class="form-control" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Min Clip Duration (s)</label>
+            <input name="min_clip_duration" type="number" step="0.5" value="15.0" class="form-control" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Target Clip Duration (s)</label>
+            <input name="target_clip_duration" type="number" step="0.5" value="35.0" class="form-control" />
+          </div>
+
+          <div class="col-md-6 form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="vertical" name="vertical" checked>
+            <label class="form-check-label" for="vertical">Vertical crop (9:16)</label>
+          </div>
+          <div class="col-md-6 form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="face_tracking" name="face_tracking" checked>
+            <label class="form-check-label" for="face_tracking">Face tracking bias</label>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Cookies File (optional)</label>
+            <input name="cookies" class="form-control" placeholder="~/.config/yt-dlp/cookies.txt" />
+          </div>
+          <div class="col-12">
+            <label class="form-label">Cookies from Browser (optional)</label>
+            <input name="cookies_from_browser" class="form-control" placeholder="chrome, firefox" />
+          </div>
+
+          <div class="col-12">
+            <button type="submit" class="btn btn-success btn-lg">🚀 Start Pipeline</button>
+            <a href="{{ url_for('status') }}" class="btn btn-primary ms-2">📊 Check Status</a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if recent_result %}
+    <div class="card status-card">
+      <div class="card-header">
+        <h5>Last Run Summary</h5>
+      </div>
+      <div class="card-body">
+        <ul class="list-unstyled">
+          <li><strong>Video:</strong> {{ recent_result.video_path }}</li>
+          <li><strong>Duration:</strong> {{ recent_result.video_duration_sec }} seconds</li>
+          <li><strong>Clips Generated:</strong> {{ recent_result.clips|length }}</li>
+          <li><a href="{{ url_for('browse_clips') }}" class="btn btn-outline-primary">🎥 Browse Clips</a></li>
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
