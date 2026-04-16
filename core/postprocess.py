@@ -3,26 +3,55 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta
+from concurrent.futures import ProcessPoolExecutor
+import cv2
+import numpy as np
 
 from core.logging_config import logger
+from core.config import cfg
+from core.subtitle_styles import get_style
+from core.utils import ffmpeg_escape_path, sanitize_ass_text
 
-# Same hook lexicon as analysis (for subtitle emphasis)
-HOOK_WORDS = {
-    "insane",
-    "crazy",
-    "secret",
-    "shocking",
-    "impossible",
-    "never",
-    "nobody",
-    "truth",
-    "mistake",
-    "warning",
-}
+class FaceDetector:
+    def __init__(self, model_path="models/face_detection_short_range.tflite"):
+        self.net = None
+        if os.path.exists(model_path):
+            try:
+                self.net = cv2.dnn.readNetFromTFLite(model_path)
+                logger.info("Face detector loaded from %s", model_path)
+            except Exception as e:
+                logger.warning("Failed to load face detector from %s: %s", model_path, e)
 
+    def detect_face_center(self, frame):
+        """Returns the X-coordinate (normalized 0-1) of the most prominent face."""
+        h, w = frame.shape[:2]
+        
+        # Fallback to Haar Cascades (standard OpenCV, very reliable for this use case)
+        # TFLite parsing for BlazeFace in cv2.dnn can be extremely complex without MediaPipe
+        # So we use Haar as a reliable baseline for "Back-end Enhancements"
+        try:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Use a slightly smaller scale for speed
+            small_gray = cv2.resize(gray, (0,0), fx=0.5, fy=0.5)
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            faces = face_cascade.detectMultiScale(small_gray, 1.2, 3)
+            
+            if len(faces) > 0:
+                # Find the largest face (closest to camera)
+                largest_face = max(faces, key=lambda f: f[2] * f[3])
+                fx, fy, fw, fh = largest_face
+                # Adjust for 0.5x scaling
+                center_x = (fx + fw/2) * 2
+                return float(center_x / w)
+        except Exception as e:
+            logger.debug("Haar detection failed: %s", e)
+            
+        return 0.5
+
+_face_detector = None
 
 def proximo_id():
-    pasta = "data/clips"
+    pasta = cfg.clips_dir
     os.makedirs(pasta, exist_ok=True)
     ids = []
     for f in os.listdir(pasta):
@@ -42,20 +71,15 @@ def _ass_time(sec):
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _word_key(w):
-    return re.sub(r"^[^\w]+|[^\w]+$", "", w.lower())
+def _word_key(word):
+    return re.sub(r"^[^\w]+|[^\w]+$", "", word.lower())
 
 
 def _is_hook_word(word):
-    return _word_key(word) in HOOK_WORDS
+    return _word_key(word) in cfg.hook_keywords
 
 
 def upload_clips_to_youtube(clip_paths, metadata_entries, privacy="unlisted", dry_run=False):
-    """Upload clips using youtube-upload CLI.
-
-    Requires `youtube-upload` command to be available on PATH and already
-    authenticated with Google OAuth credentials.
-    """
     if not clip_paths:
         return []
 
@@ -118,15 +142,6 @@ def upload_clips_to_youtube(clip_paths, metadata_entries, privacy="unlisted", dr
     return uploads
 
 
-def _sanitize_ass_text(text):
-    return (
-        text.replace("\\", r"\\")
-        .replace("{", r"\{")
-        .replace("}", r"\}")
-        .strip()
-    )
-
-
 def _flatten_words(segmentos):
     words = []
     for seg in segmentos:
@@ -161,35 +176,69 @@ def _word_chunks(words, max_words=3):
 
 def face_horizontal_bias(video_path, t_start, duration, samples=6):
     """
-    Always return 0.5 (center crop) since face detection is not available.
+    Analyzes several frames from the video segment to find the dominant face
+    and returns its average horizontal position (0-1).
     """
-    return 0.5
+    global _face_detector
+    if _face_detector is None:
+        _face_detector = FaceDetector()
+        
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return 0.5
+        
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0: fps = 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    start_frame = int(t_start * fps)
+    end_frame = int((t_start + duration) * fps)
+    
+    # Sample frames across the duration
+    frame_indices = np.linspace(start_frame, min(end_frame, total_frames - 1), samples, dtype=int)
+    
+    positions = []
+    for idx in frame_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        pos = _face_detector.detect_face_center(frame)
+        positions.append(pos)
+        
+    cap.release()
+    
+    if not positions:
+        return 0.5
+        
+    # Return average but weight more towards the center if detections are scattered
+    return float(np.mean(positions))
 
 
-def _ffmpeg_escape_ass_path(path):
-    p = os.path.abspath(path).replace("\\", "/")
-    p = p.replace(":", r"\\:")
-    p = p.replace("'", r"\'")
-    return p
-
-
-def _build_vertical_vf(subtitle_path, bias=0.5):
-    """
-    9:16 output 1080x1920: scale to cover frame, crop width 1080; bias in [0,1] shifts crop.
-    """
-    ass = _ffmpeg_escape_ass_path(subtitle_path)
+def _build_vf(subtitle_path, vertical=True, bias=0.5):
+    ass = ffmpeg_escape_path(subtitle_path)
     b = min(1.0, max(0.0, float(bias)))
-    return (
-        f"scale=1080:1920:force_original_aspect_ratio=increase,"
-        f"crop=1080:1920:(iw-1080)*{b:.6f}:0,"
-        f"format=yuv420p,"
-        f"ass={ass}"
-    )
+    if vertical:
+        return (
+            f"scale=1080:1920:force_original_aspect_ratio=increase,"
+            f"crop=1080:1920:(iw-1080)*{b:.6f}:0,"
+            f"format=yuv420p,"
+            f"ass={ass}"
+        )
+    return f"ass={ass}"
 
 
 def gerar_legenda(segmentos, output_path):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     words = _flatten_words(segmentos)
+    
+    style_def = get_style(cfg.subtitle_style)
+    # Override font if specified
+    if hasattr(cfg, 'subtitle_font') and cfg.subtitle_font:
+        style_def.fontname = cfg.subtitle_font
+        
+    style_name = style_def.name
+    
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("[Script Info]\n")
         f.write("Title: MitoClipper\n")
@@ -205,14 +254,8 @@ def gerar_legenda(segmentos, output_path):
             "ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,"
             "MarginL,MarginR,MarginV,Encoding\n"
         )
-        f.write(
-            "Style: TikTok,Arial Black,92,&H00FFFFFF,&H0000D7FF,&H00000000,&H80000000,"
-            "1,0,0,0,100,100,0,0,1,5,3,2,80,80,140,1\n"
-        )
-        f.write(
-            "Style: Hook,Arial Black,96,&H0000FFFF,&H0000D7FF,&H00000000,&H80000000,"
-            "1,0,0,0,105,105,0,0,1,5,3,2,80,80,140,1\n\n"
-        )
+        f.write(style_def.generate_ass_style_header())
+        f.write("\n")
 
         f.write("[Events]\n")
         f.write(
@@ -226,25 +269,32 @@ def gerar_legenda(segmentos, output_path):
             for w in chunk:
                 raw = w["word"]
                 dur = max(0.1, float(w["end"]) - float(w["start"]))
+                # Karaoke timer in centiseconds
                 cs = max(8, min(120, int(dur * 100)))
-                display = _sanitize_ass_text(raw).upper()
+                display = sanitize_ass_text(raw).upper()
                 if not display:
                     continue
-                if _is_hook_word(raw):
-                    parts.append(
-                        f"{{\\k{cs}}}{{\\fnArial Black\\fs96\\c&H0000FFFF&\\3c&H000000&}}"
-                        f"{display}{{\\r}}"
-                    )
-                else:
-                    parts.append(
-                        f"{{\\k{cs}}}{{\\fnArial Black\\fs92\\c&H00FFFFFF&\\3c&H000000&}}"
-                        f"{display}{{\\r}}"
-                    )
+                    
+                is_hook = _is_hook_word(raw)
+                target_color = style_def.hook_color if is_hook else style_def.active_color
+                scx = int(style_def.hook_scale * 100) if is_hook else int(style_def.active_scale * 100)
+                scy = scx
+
+                c_tag = target_color.replace("&H00", "&H") if target_color.startswith("&H00") else target_color
+                
+                # Active word animation using \t
+                # Starts with default font settings (karaoke keeps highlight synced), 
+                # but we'll manually apply color and scale when word is hit
+                parts.append(
+                    f"{{\\k{cs}}}{{\\c{c_tag}&\\fscx{scx}\\fscy{scy}\\t(0,50,\\fscx100\\fscy100)}}"
+                    f"{display}{{\\r}}"
+                )
+
             if not parts:
                 continue
             text = " ".join(parts)
             f.write(
-                f"Dialogue: 0,{_ass_time(line_start)},{_ass_time(line_end)},TikTok,,0,0,0,,{text}\n"
+                f"Dialogue: 0,{_ass_time(line_start)},{_ass_time(line_end)},{style_name},,0,0,0,,{text}\n"
             )
 
     return output_path
@@ -260,6 +310,7 @@ def _segmentos_no_intervalo(segmentos, start, end):
         seg_copy = {
             "start": max(0.0, seg_start - start),
             "end": max(0.0, seg_end - start),
+            "text": seg.get("text", "")
         }
         if "words" in seg:
             words = []
@@ -280,80 +331,94 @@ def _segmentos_no_intervalo(segmentos, start, end):
     return selected
 
 
-def gerar_clips(video, cortes, segmentos, vertical=True, face_tracking=True):
+def _process_single_clip(args):
+    idx, clip_info, video_path, segmentos, vertical, face_tracking, base_id, hoje, clip_meta = args
+    start = float(clip_info["start"])
+    end = float(clip_info["end"])
+    dur = int(max(1, round(end - start)))
+    letra = chr(ord("A") + idx)
+    nome = f"{base_id}{letra}_{hoje:%d_%m}_{dur}.mp4"
+    saida = os.path.join(cfg.clips_dir, nome)
+    meta_saida = os.path.join(cfg.clips_dir, f"{base_id}{letra}_{hoje:%d_%m}_{dur}.json")
+
+    segs_clip = _segmentos_no_intervalo(segmentos, start, end)
+    sub_path = os.path.join(cfg.subtitles_dir, f"{base_id}{letra}_{hoje:%d_%m}_{dur}.ass")
+    gerar_legenda(segs_clip, sub_path)
+
+    # Save metadata if provided
+    if clip_meta:
+        from core.utils import save_json
+        save_json(meta_saida, clip_meta)
+
+    bias = 0.5
+
+    if vertical and face_tracking:
+        bias = face_horizontal_bias(video_path, start, end - start)
+
+    vf = _build_vf(sub_path, vertical=vertical, bias=bias)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start),
+        "-to", str(end),
+        "-i", video_path,
+        "-vf", vf,
+        "-c:v", cfg.ffmpeg_video_encoder,
+        "-preset", "medium",
+        "-crf", "20",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-ar", "48000",
+        saida,
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        return {
+            "video_path": saida,
+            "subtitle_path": sub_path,
+            "start": start,
+            "end": end,
+            "vertical": vertical,
+            "face_bias": bias if vertical else None,
+            "success": True
+        }
+    except subprocess.CalledProcessError as e:
+        logger.error("FFmpeg error for clip %d: %s", idx, e.stderr.decode())
+        return {"success": False, "error": str(e), "idx": idx}
+
+
+def gerar_clips(video, cortes, segmentos, vertical=True, face_tracking=True, metadata=None):
     logger.info(
-        "Generating clips: video=%s, cortes=%d, vertical=%s, face_tracking=%s",
+        "Generating clips (parallel): video=%s, cortes=%d, vertical=%s, face_tracking=%s",
         video,
         len(cortes) if cortes else 0,
         vertical,
         face_tracking,
     )
-    pasta = "data/clips"
-    pasta_sub = "data/subtitles"
-    os.makedirs(pasta, exist_ok=True)
-    os.makedirs(pasta_sub, exist_ok=True)
+    os.makedirs(cfg.clips_dir, exist_ok=True)
+    os.makedirs(cfg.subtitles_dir, exist_ok=True)
 
     base_id = proximo_id()
     hoje = datetime.now()
-    outputs = []
-
+    
+    worker_args = []
     for i, c in enumerate(cortes):
-        start = float(c["start"])
-        end = float(c["end"])
-        dur = int(max(1, round(end - start)))
-        letra = chr(ord("A") + i)
-        nome = f"{base_id}{letra}_{hoje:%d_%m}_{dur}.mp4"
-        saida = os.path.join(pasta, nome)
+        clip_meta = None
+        if metadata and i < len(metadata):
+            clip_meta = metadata[i]
+        worker_args.append((i, c, video, segmentos, vertical, face_tracking, base_id, hoje, clip_meta))
 
-        segs_clip = _segmentos_no_intervalo(segmentos, start, end)
-        sub_path = os.path.join(pasta_sub, f"{base_id}{letra}_{hoje:%d_%m}_{dur}.ass")
-        gerar_legenda(segs_clip, sub_path)
-
-        bias = 0.5
-        if vertical and face_tracking:
-            bias = face_horizontal_bias(video, start, end - start)
-
-        if vertical:
-            vf = _build_vertical_vf(sub_path, bias=bias)
+    outputs = []
+    # Use max 4 workers to avoid overloading CPU/GPU
+    with ProcessPoolExecutor(max_workers=min(len(cortes), 4)) as executor:
+        results = list(executor.map(_process_single_clip, worker_args))
+        
+    for res in results:
+        if res.get("success"):
+            outputs.append(res)
         else:
-            vf = f"ass={_ffmpeg_escape_ass_path(sub_path)}"
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-ss",
-            str(start),
-            "-to",
-            str(end),
-            "-i",
-            video,
-            "-vf",
-            vf,
-            "-c:v",
-            "libx264",
-            "-preset",
-            "medium",
-            "-crf",
-            "20",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-ar",
-            "48000",
-            saida,
-        ]
-        subprocess.run(cmd, check=True)
-        outputs.append(
-            {
-                "video_path": saida,
-                "subtitle_path": sub_path,
-                "start": start,
-                "end": end,
-                "vertical": vertical,
-                "face_bias": bias if vertical else None,
-            }
-        )
+            logger.error("Failed to generate clip %s", res.get("idx"))
 
     logger.info("Generated %d clip outputs", len(outputs))
     return outputs

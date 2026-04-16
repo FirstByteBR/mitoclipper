@@ -1,6 +1,10 @@
 import os
+import yaml
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+from dotenv import load_dotenv
+
+load_dotenv()
 
 @dataclass
 class PipelineConfig:
@@ -10,7 +14,7 @@ class PipelineConfig:
     min_clip_duration: float = 15.0
     target_clip_duration: float = 35.0
     vertical: bool = True
-    face_tracking: bool = True # Placeholder, will be removed if not implemented
+    face_tracking: bool = True
     auto_upload: bool = False
     youtube_privacy: str = "unlisted"
     use_heatmap: bool = True
@@ -36,14 +40,14 @@ class PipelineConfig:
     embeddings_model_id: str = "all-MiniLM-L6-v2"
     emotion_model_id: str = "superb/wav2vec2-base-superb-er"
     whisper_model_id: str = "base"
-    llm_device_env_var: str = "MITOCLIPPER_LLM_DEVICE"
-    log_level_env_var: str = "MITOCLIPPER_LOG_LEVEL"
-
+    whisper_compute_type: str = "float16" # float16, int8_float16, int8
+    llm_device: str = "cpu"
+    
     # Analysis Parameters
-    hook_keywords: Dict[str, None] = field(default_factory=lambda: { # Using dict for O(1) lookup
-        "insane": None, "crazy": None, "secret": None, "shocking": None, "impossible": None,
-        "never": None, "nobody": None, "truth": None, "mistake": None, "warning": None,
-    })
+    hook_keywords: List[str] = field(default_factory=lambda: [
+        "insane", "crazy", "secret", "shocking", "impossible",
+        "never", "nobody", "truth", "mistake", "warning",
+    ])
     viral_score_weights: Dict[str, float] = field(default_factory=lambda: {
         "semantic_novelty": 0.25,
         "emotion_intensity": 0.15,
@@ -57,33 +61,21 @@ class PipelineConfig:
     transcript_max_chars: int = 18000
 
     # FFmpeg/yt-dlp
-    youtube_dl_cookiefile_env_var: str = "YT_DLP_COOKIES"
-    youtube_dl_cookies_from_browser_env_var: str = "YT_DLP_COOKIES_FROM_BROWSER"
+    youtube_dl_cookiefile: Optional[str] = None
+    youtube_dl_cookies_from_browser: Optional[str] = None
+    ffmpeg_video_encoder: str = "libx264" # Use h264_nvenc for NVIDIA GPUs
     
     # Subtitle Styling (ASS)
-    ass_fontname_tiktok: str = "Arial Black"
-    ass_fontsize_tiktok: int = 92
-    ass_primarycolor_tiktok: str = "&H00FFFFFF"
-    ass_outlinecolor_tiktok: str = "&H00000000"
-    ass_backcolor_tiktok: str = "&H80000000"
-
-    ass_fontname_hook: str = "Arial Black"
-    ass_fontsize_hook: int = 96
-    ass_primarycolor_hook: str = "&H0000FFFF" # Yellow
-    ass_outlinecolor_hook: str = "&H00000000"
-    ass_backcolor_hook: str = "&H80000000"
-    
-    ass_wrapstyle: int = 0
-    ass_alignment: int = 2
-    ass_marginv: int = 140
-    ass_outline: int = 5
-    ass_shadow: int = 3
+    subtitle_style: str = "hormozi"
+    subtitle_font: Optional[str] = None
 
     def __post_init__(self):
-        # Ensure data_dir exists before joining
-        os.makedirs(self.data_dir, exist_ok=True)
+        # Override with environment variables
+        self._load_from_env()
+        # Override with config.yaml if it exists
+        self._load_from_yaml()
 
-        # Initialize paths relative to data_dir
+        os.makedirs(self.data_dir, exist_ok=True)
         self.downloads_dir = os.path.join(self.data_dir, "downloads")
         self.audio_dir = os.path.join(self.data_dir, "audio")
         self.subtitles_dir = os.path.join(self.data_dir, "subtitles")
@@ -97,4 +89,34 @@ class PipelineConfig:
         self.generated_metadata_json = os.path.join(self.transcripts_dir, "generated_metadata.json")
         self.pipeline_metrics_json = os.path.join(self.transcripts_dir, "pipeline_metrics.json")
         self.log_file = os.path.join(self.log_dir, "mitoclipper.log")
+
+    def _load_from_env(self):
+        for field_name in self.__dataclass_fields__:
+            env_var = f"MITOCLIPPER_{field_name.upper()}"
+            val = os.environ.get(env_var)
+            if val is not None:
+                # Basic type conversion
+                default_val = getattr(self, field_name)
+                if isinstance(default_val, bool):
+                    setattr(self, field_name, val.lower() in ("true", "1", "yes"))
+                elif isinstance(default_val, int):
+                    setattr(self, field_name, int(val))
+                elif isinstance(default_val, float):
+                    setattr(self, field_name, float(val))
+                elif isinstance(default_val, list):
+                    setattr(self, field_name, [v.strip() for v in val.split(",")])
+                else:
+                    setattr(self, field_name, val)
+
+    def _load_from_yaml(self, path="config.yaml"):
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+                if data:
+                    for k, v in data.items():
+                        if hasattr(self, k):
+                            setattr(self, k, v)
+
+# Global configuration instance
+cfg = PipelineConfig()
 

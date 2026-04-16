@@ -7,7 +7,7 @@ from core.analysis import detectar_momentos_virais, gerar_metadados, parse_gener
 from core.logging_config import logger
 from core.metrics import pipeline_metrics
 from core.models import init_models
-from core.pipeline_slate import PipelineState
+from core.pipeline_context import PipelineContext
 from core.postprocess import gerar_clips, upload_clips_to_youtube
 from core.preprocess import (
     baixar_video,
@@ -15,129 +15,117 @@ from core.preprocess import (
     get_video_duration_seconds,
     transcrever,
 )
-
-def _save_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+from core.config import cfg
+from core.utils import save_json
 
 
 def run(
     url,
-    top_k=3,
-    max_duration=60,
-    min_clip_duration=15.0,
-    target_clip_duration=35.0,
-    vertical=True,
-    face_tracking=True,
-    cookies_file=None,
-    cookies_from_browser=None,
-    use_heatmap=True,
-    auto_upload=False,
-    youtube_privacy="unlisted",
+    **kwargs
 ):
-    PipelineState.reset()
-    PipelineState.status = "running"
-    PipelineState.current_stage = "started"
+    # Update global cfg with CLI arguments
+    for k, v in kwargs.items():
+        if v is not None and hasattr(cfg, k):
+            setattr(cfg, k, v)
+    
+    # Custom overrides for CLI flags
+    if kwargs.get("no_vertical") is True: cfg.vertical = False
+    if kwargs.get("no_face") is True: cfg.face_tracking = False
+    if kwargs.get("no_heatmap") is True: cfg.use_heatmap = False
+
+    # Initialize Context
+    ctx = PipelineContext(url=url, config=cfg, metrics=pipeline_metrics)
+    ctx.status = "running"
     pipeline_metrics.start_run(url=url)
     logger.info("Pipeline run started for %s", url)
 
     try:
         with pipeline_metrics.step("download"):
-            PipelineState.current_stage = "download"
+            ctx.mark_stage("download")
             downloaded = baixar_video(
-                url,
-                cookies_file=cookies_file,
-                cookies_from_browser=cookies_from_browser,
-                use_heatmap=use_heatmap,
+                ctx.url,
+                cookies_file=cfg.youtube_dl_cookiefile,
+                cookies_from_browser=cfg.youtube_dl_cookies_from_browser,
+                use_heatmap=cfg.use_heatmap,
             )
-            video_path = downloaded["video_path"]
-            heatmap = downloaded.get("heatmap")
-            PipelineState.current_video = video_path
-            PipelineState.mark("download")
+            ctx.video_path = downloaded["video_path"]
+            ctx.heatmap = downloaded.get("heatmap")
 
         with pipeline_metrics.step("video_duration"):
-            PipelineState.current_stage = "video_duration"
-            video_duration = get_video_duration_seconds(video_path)
+            ctx.mark_stage("video_duration")
+            ctx.video_duration = get_video_duration_seconds(ctx.video_path)
 
         with pipeline_metrics.step("audio_extraction"):
-            PipelineState.current_stage = "audio_extraction"
-            audio_path = extrair_audio(video_path)
-            PipelineState.mark("audio")
+            ctx.mark_stage("audio_extraction")
+            ctx.audio_path = extrair_audio(ctx.video_path)
 
         with pipeline_metrics.step("transcription"):
-            PipelineState.current_stage = "transcription"
-            segmentos = transcrever(audio_path)
-            PipelineState.mark("transcription")
-            _save_json("data/transcripts/transcript.json", segmentos)
+            ctx.mark_stage("transcription")
+            ctx.transcript = transcrever(ctx.audio_path)
+            save_json(cfg.transcript_json, ctx.transcript)
 
         with pipeline_metrics.step("analysis"):
-            PipelineState.current_stage = "analysis"
-            cortes = detectar_momentos_virais(
-                segmentos=segmentos,
-                audio_path=audio_path,
-                top_k=top_k,
-                max_duration=max_duration,
-                video_duration=video_duration,
-                min_clip_duration=min_clip_duration,
-                target_clip_duration=target_clip_duration,
-                heatmap=heatmap,
+            ctx.mark_stage("analysis")
+            ctx.viral_segments = detectar_momentos_virais(
+                segmentos=ctx.transcript,
+                audio_path=ctx.audio_path,
+                top_k=cfg.top_k,
+                max_duration=cfg.max_duration,
+                video_duration=ctx.video_duration,
+                min_clip_duration=cfg.min_clip_duration,
+                target_clip_duration=cfg.target_clip_duration,
+                heatmap=ctx.heatmap,
             )
-            PipelineState.mark("analysis")
-            _save_json("data/transcripts/viral_segments.json", cortes)
+            save_json(cfg.viral_segments_json, ctx.viral_segments)
 
         with pipeline_metrics.step("metadata"):
-            PipelineState.current_stage = "metadata"
-            metadados = gerar_metadados(segmentos, cortes)
-            parsed_metadados = parse_generated_metadata(metadados)
-            PipelineState.mark("metadata")
-            _save_json("data/transcripts/generated_metadata.json", {"raw": metadados, "parsed": parsed_metadados})
+            ctx.mark_stage("metadata")
+            metadados_raw = gerar_metadados(ctx.transcript, ctx.viral_segments)
+            ctx.metadata = {"raw": metadados_raw, "parsed": parse_generated_metadata(metadados_raw)}
+            save_json(cfg.generated_metadata_json, ctx.metadata)
 
         with pipeline_metrics.step("clip_generation"):
-            PipelineState.current_stage = "clip_generation"
+            ctx.mark_stage("clip_generation")
             clips = gerar_clips(
-                video_path,
-                cortes,
-                segmentos,
-                vertical=vertical,
-                face_tracking=face_tracking,
+                ctx.video_path,
+                ctx.viral_segments,
+                ctx.transcript,
+                vertical=cfg.vertical,
+                face_tracking=cfg.face_tracking,
+                metadata=ctx.metadata.get("parsed", []),
             )
-            PipelineState.mark("clips")
+            ctx.clips = clips
 
-        upload_info = []
-        if auto_upload:
+        if cfg.auto_upload:
             with pipeline_metrics.step("youtube_upload"):
-                PipelineState.current_stage = "youtube_upload"
-                upload_info = upload_clips_to_youtube(
-                    [c.get("video_path") for c in clips],
-                    parsed_metadados,
-                    privacy=youtube_privacy,
+                ctx.mark_stage("youtube_upload")
+                ctx.upload_results = upload_clips_to_youtube(
+                    [c.get("video_path") for c in clips if c.get("success")],
+                    ctx.metadata.get("parsed", []),
+                    privacy=cfg.youtube_privacy,
                 )
-                PipelineState.youtube_upload_results = upload_info
-                PipelineState.mark("youtube_upload")
 
-        PipelineState.status = "done"
+        ctx.success()
         result = {
-            "upload_info": upload_info,
-            "video_path": video_path,
-            "video_duration_sec": video_duration,
-            "audio_path": audio_path,
-            "clips": clips,
-            "viral_segments": cortes,
-            "metadata_raw": metadados,
+            "upload_info": ctx.upload_results,
+            "video_path": ctx.video_path,
+            "video_duration_sec": ctx.video_duration,
+            "audio_path": ctx.audio_path,
+            "clips": ctx.clips,
+            "viral_segments": ctx.viral_segments,
+            "metadata": ctx.metadata,
             "metrics": pipeline_metrics.get_summary(),
         }
-        _save_json("data/transcripts/pipeline_result.json", result)
+        save_json(cfg.pipeline_result_json, result)
         pipeline_metrics.end_run(success=True)
-        pipeline_metrics.save_metrics()
-        logger.info("Pipeline run completed successfully in %.2fs", result["metrics"]["last_run"]["duration_sec"])
+        pipeline_metrics.save_metrics(cfg.pipeline_metrics_json)
         return result
+        
     except Exception as exc:
-        PipelineState.fail(str(exc))
+        ctx.fail(str(exc))
         pipeline_metrics.record_error("pipeline", exc)
         pipeline_metrics.end_run(success=False, error=str(exc))
-        pipeline_metrics.save_metrics()
-        logger.exception("Pipeline run failed for %s", url)
+        pipeline_metrics.save_metrics(cfg.pipeline_metrics_json)
         raise
 
 
@@ -148,23 +136,20 @@ def main():
         nargs="?",
         help="Video URL, or a local path to a video file you already have",
     )
-    parser.add_argument("--top-k", type=int, default=3, help="Number of clips to generate")
+    parser.add_argument("--top-k", type=int, help="Number of clips to generate")
     parser.add_argument(
         "--max-duration",
         type=int,
-        default=60,
         help="Maximum duration of each clip in seconds",
     )
     parser.add_argument(
         "--min-clip-duration",
         type=float,
-        default=15.0,
-        help="Minimum clip length after expansion (Whisper segments are often short)",
+        help="Minimum clip length after expansion",
     )
     parser.add_argument(
         "--target-clip-duration",
         type=float,
-        default=35.0,
         help="Target clip length when expanding around a viral moment",
     )
     parser.add_argument(
@@ -180,31 +165,38 @@ def main():
     parser.add_argument(
         "--cookies",
         metavar="PATH",
-        help="Netscape cookies.txt for yt-dlp (fixes YouTube bot / 429 when logged in)",
+        help="Netscape cookies.txt for yt-dlp",
     )
     parser.add_argument(
         "--cookies-from-browser",
         metavar="SPEC",
-        help=(
-            "yt-dlp cookies: firefox, chrome, chrome:ProfileName, or "
-            "firefox:/abs/path/to/profile (Zen: use firefox:PATH to Zen profile dir with cookies.sqlite)"
-        ),
+        help="yt-dlp cookies from browser",
     )
     parser.add_argument(
         "--no-heatmap",
         action="store_true",
-        help="Do not fetch YouTube heatmap data during download/analysis",
+        help="Do not fetch YouTube heatmap data",
     )
     parser.add_argument(
         "--auto-upload",
         action="store_true",
-        help="Automatically upload generated clips to YouTube after pipeline and metadata generation",
+        help="Automatically upload generated clips to YouTube",
     )
     parser.add_argument(
         "--youtube-privacy",
         choices=["public", "unlisted", "private"],
-        default="unlisted",
         help="Privacy setting for uploaded videos",
+    )
+    parser.add_argument(
+        "--subtitle-style",
+        type=str,
+        default="hormozi",
+        help="Subtitle style to use (e.g., hormozi, mrbeast, minimalist)",
+    )
+    parser.add_argument(
+        "--subtitle-font",
+        type=str,
+        help="Override the default font for the selected subtitle style",
     )
 
     args = parser.parse_args()
@@ -219,13 +211,15 @@ def main():
         max_duration=args.max_duration,
         min_clip_duration=args.min_clip_duration,
         target_clip_duration=args.target_clip_duration,
-        vertical=not args.no_vertical,
-        face_tracking=not args.no_face,
+        no_vertical=args.no_vertical,
+        no_face=args.no_face,
         cookies_file=args.cookies,
         cookies_from_browser=args.cookies_from_browser,
-        use_heatmap=not args.no_heatmap,
+        no_heatmap=args.no_heatmap,
         auto_upload=args.auto_upload,
         youtube_privacy=args.youtube_privacy,
+        subtitle_style=args.subtitle_style,
+        subtitle_font=args.subtitle_font,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

@@ -8,8 +8,8 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError, ExtractorError
 
 from core.logging_config import logger
-
 from core.models import get_whisper
+from core.config import cfg
 
 _YOUTUBE_FORMAT_HELP = (
     "YouTube did not expose any real video formats (often: 'Only images are available'). "
@@ -32,8 +32,18 @@ def get_video_duration_seconds(video_path):
         "json",
         video_path,
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return float(json.loads(out.stdout)["format"]["duration"])
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(out.stdout)
+        if "format" in data and "duration" in data["format"]:
+            return float(data["format"]["duration"])
+        raise RuntimeError(f"Could not find duration in ffprobe output: {out.stdout}")
+    except subprocess.CalledProcessError as e:
+        logger.error("ffprobe failed for %s: %s", video_path, e.stderr)
+        raise RuntimeError(f"ffprobe failed for {video_path}: {e.stderr}")
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        logger.error("Could not parse ffprobe output for %s: %s", video_path, e)
+        raise RuntimeError(f"Could not parse ffprobe output for {video_path}")
 
 
 def _youtube_id_from_url(url):
@@ -58,10 +68,9 @@ def get_heatmap(video_id):
             data = json.loads(match.group(1))
             heat_map = data.get('videoDetails', {}).get('heatMap')
             if heat_map:
-                # heat_map is list of {'time': seconds, 'heat': intensity 0-1}
                 return heat_map
     except Exception as e:
-        logger.warning("Failed to get heatmap: %s", e, exc_info=True)
+        logger.warning("Failed to get heatmap: %s", e)
     return None
 
 
@@ -76,7 +85,7 @@ def _is_local_video_path(url):
     return False, None
 
 
-def _find_cached_download(video_id, download_dir="data/downloads"):
+def _find_cached_download(video_id, download_dir):
     """Look for an already-downloaded file for this YouTube video id."""
     if not video_id:
         return None
@@ -84,7 +93,6 @@ def _find_cached_download(video_id, download_dir="data/downloads"):
         p = os.path.join(download_dir, f"{video_id}.{ext}")
         if os.path.isfile(p):
             return p
-    # Older runs used %(title)s — any filename containing the 11-char id still matches.
     if os.path.isdir(download_dir):
         for name in os.listdir(download_dir):
             if video_id in name and name.lower().endswith(
@@ -95,30 +103,18 @@ def _find_cached_download(video_id, download_dir="data/downloads"):
 
 
 def _yt_dlp_cookie_opts(cookies_file=None, cookies_from_browser=None):
-    """
-    YouTube often returns 429 or 'Sign in to confirm you are not a bot' for anonymous
-    requests. Pass cookies from a Netscape cookies.txt file or from your browser profile.
-    Env: YT_DLP_COOKIES (path), YT_DLP_COOKIES_FROM_BROWSER (e.g. firefox or chrome:Default).
-    """
-    path = cookies_file or os.environ.get("YT_DLP_COOKIES", "").strip()
-    browser = (cookies_from_browser or os.environ.get("YT_DLP_COOKIES_FROM_BROWSER", "")).strip()
+    path = cookies_file or cfg.youtube_dl_cookiefile
+    browser = cookies_from_browser or cfg.youtube_dl_cookies_from_browser
     opts = {}
     if path and os.path.isfile(path):
         opts["cookiefile"] = path
     elif browser:
         b = browser.strip()
-        if b.lower() == "zen":
-            raise ValueError(
-                "yt-dlp does not support browser name 'zen'. Zen is Firefox-based: use "
-                "firefox:/absolute/path/to/your/Zen/profile (folder that contains "
-                "cookies.sqlite). In Zen open about:profiles → Open Folder, copy that path. "
-                "Or export cookies to a Netscape cookies.txt and pass --cookies PATH."
-            )
         name, sep, profile = b.partition(":")
         name = name.strip()
         if sep:
             p = profile.strip()
-            opts["cookiesfrombrowser"] = (name,) if not p else (name, p)
+            opts["cookiesfrombrowser"] = (name, p)
         else:
             opts["cookiesfrombrowser"] = (name,)
     return opts
@@ -129,13 +125,6 @@ def _without_cookies(opts):
 
 
 def _download_sequences():
-    """
-    With cookies, yt-dlp skips android/ios clients; the web client often needs JS (EJS/Deno)
-    for challenges, or YouTube only returns 'image' formats.
-
-    Phase 1: cookies + merge / best / web+tv_embedded.
-    Phase 2: NO cookies + android/ios (gets real video for many public URLs).
-    """
     with_cookie = [
         {"format": "bv*+ba/bv+ba/b", "merge_output_format": "mp4"},
         {"format": "bestvideo*+bestaudio/best", "merge_output_format": "mp4"},
@@ -164,7 +153,7 @@ def _download_sequences():
 
 def baixar_video(url, cookies_file=None, cookies_from_browser=None, use_heatmap=True):
     logger.info("Starting video download: url=%s", url)
-    os.makedirs("data/downloads", exist_ok=True)
+    os.makedirs(cfg.downloads_dir, exist_ok=True)
 
     ok, local = _is_local_video_path(url)
     if ok:
@@ -174,14 +163,13 @@ def baixar_video(url, cookies_file=None, cookies_from_browser=None, use_heatmap=
     cookie_opts = _yt_dlp_cookie_opts(cookies_file, cookies_from_browser)
 
     base_opts = {
-        "outtmpl": "data/downloads/%(id)s.%(ext)s",
+        "outtmpl": os.path.join(cfg.downloads_dir, "%(id)s.%(ext)s"),
         "retries": 5,
         "fragment_retries": 5,
         "ignoreerrors": False,
         **cookie_opts,
     }
 
-    # Probe metadata without downloading (stable id for cache + filename).
     probe_opts = {**base_opts, "quiet": True, "no_warnings": True}
     info = {}
     try:
@@ -191,14 +179,19 @@ def baixar_video(url, cookies_file=None, cookies_from_browser=None, use_heatmap=
         pass
 
     video_id = (info or {}).get("id") or _youtube_id_from_url(url)
-    cached = _find_cached_download(video_id)
+    cached = _find_cached_download(video_id, cfg.downloads_dir)
     if cached:
-        return {"info": info, "video_path": cached, "cached": True, "heatmap": None}
+        try:
+            get_video_duration_seconds(cached)
+            logger.info("Using valid cached download: %s", cached)
+            return {"info": info, "video_path": cached, "cached": True, "heatmap": None}
+        except Exception:
+            logger.warning("Cached download %s is corrupted. Deleting and re-downloading...", cached)
+            os.remove(cached)
 
     last_err = None
     with_cookie, no_cookie = _download_sequences()
     phases = [(base_opts, with_cookie)]
-    # Without cookies, android client can return real video while cookie+web returns only images.
     phases.append((_without_cookies(base_opts), no_cookie))
 
     for phase_opts, attempts in phases:
@@ -216,6 +209,17 @@ def baixar_video(url, cookies_file=None, cookies_from_browser=None, use_heatmap=
                             video_path = alt
                             break
                 heatmap = get_heatmap(video_id) if use_heatmap else None
+                
+                # Verify the downloaded file
+                try:
+                    get_video_duration_seconds(video_path)
+                except Exception as e:
+                    logger.error("Newly downloaded video %s is corrupted: %s", video_path, e)
+                    last_err = e
+                    if os.path.exists(video_path):
+                        os.remove(video_path)
+                    continue
+
                 logger.info("Downloaded video using yt-dlp, path=%s", video_path)
                 return {"info": info, "video_path": video_path, "cached": False, "heatmap": heatmap}
             except (DownloadError, ExtractorError) as e:
@@ -229,9 +233,11 @@ def baixar_video(url, cookies_file=None, cookies_from_browser=None, use_heatmap=
 
 def extrair_audio(video_path):
     logger.info("Extracting audio from video %s", video_path)
-    os.makedirs("data/audio", exist_ok=True)
-
-    audio = "data/audio/audio.wav"
+    os.makedirs(cfg.audio_dir, exist_ok=True)
+    
+    # Use video ID for unique filename
+    video_id = os.path.splitext(os.path.basename(video_path))[0]
+    audio = os.path.join(cfg.audio_dir, f"{video_id}.wav")
 
     cmd = [
         "ffmpeg","-y",
@@ -243,18 +249,38 @@ def extrair_audio(video_path):
         audio
     ]
 
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     logger.info("Audio extracted to %s", audio)
     return audio
 
 
 def transcrever(audio_path):
     logger.info("Transcribing audio %s", audio_path)
-    result = get_whisper().transcribe(
+    model = get_whisper()
+    
+    # faster-whisper.transcribe returns (segments_generator, info)
+    segments_gen, info = model.transcribe(
         audio_path,
-        task="transcribe",
         word_timestamps=True,
+        beam_size=5
     )
-    segments = result.get("segments", [])
+    
+    segments = []
+    for s in segments_gen:
+        seg_dict = {
+            "start": s.start,
+            "end": s.end,
+            "text": s.text,
+            "words": []
+        }
+        if s.words:
+            for w in s.words:
+                seg_dict["words"].append({
+                    "start": w.start,
+                    "end": w.end,
+                    "word": w.word
+                })
+        segments.append(seg_dict)
+        
     logger.info("Transcription complete: %d segments", len(segments))
     return segments

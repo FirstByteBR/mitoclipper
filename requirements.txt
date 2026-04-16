@@ -1,6 +1,7 @@
 yt-dlp
 torch
 openai-whisper
+faster-whisper
 sentence-transformers
 transformers
 librosa
@@ -10,3 +11,5 @@ opencv-python
 accelerate
 tqdm
 requests
+python-dotenv
+PyYAML

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="MitoClipper — AI-powered viral clip generator with smart subtitle styling">
+  <title>MitoClipper</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✂️</text></svg>">
+</head>
+<body>
+
+<!-- ═══ Navbar ═══ -->
+<nav class="navbar" id="navbar">
+  <div class="navbar__brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="url(#grad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <defs><linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#6c8eff"/><stop offset="100%" stop-color="#3dffc0"/></linearGradient></defs>
+      <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>
+    </svg>
+    <span>Mito<span class="accent">Clipper</span></span>
+  </div>
+  <div class="navbar__nav">
+    <button class="navbar__link active" data-page="create" id="nav-create">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+      <span>Create</span>
+    </button>
+    <button class="navbar__link" data-page="clips" id="nav-clips">
+      <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+      <span>Clips</span>
+    </button>
+    <button class="navbar__link" data-page="status" id="nav-status">
+      <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>Status</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ═══ App Shell ═══ -->
+<div class="app-shell">
+
+  <!-- ─── Create Page ──────────────────────────────────────────────── -->
+  <div class="page active" id="page-create">
+    <div class="page__header">
+      <div>
+        <h1 class="page__title">Create Clips</h1>
+        <p class="page__subtitle">Paste a YouTube URL or local path and configure your pipeline settings</p>
+      </div>
+    </div>
+
+    <div class="card card--static create-panel">
+      <div class="create-panel__header">
+        <h2>New Pipeline Run</h2>
+        <span class="badge badge--idle" id="pipeline-badge">Idle</span>
+      </div>
+      <div class="create-panel__body">
+        <!-- URL Row -->
+        <div class="create-panel__url-row">
+          <input type="text" class="form-input" id="input-url" placeholder="https://youtube.com/watch?v=... or /path/to/video.mp4" autocomplete="off">
+          <button class="btn btn--primary" id="btn-run-pipeline">
+            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Run Pipeline
+          </button>
+        </div>
+
+        <!-- Toggle Advanced -->
+        <button class="btn btn--ghost" id="btn-toggle-advanced">
+          <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+          Advanced Settings
+        </button>
+
+        <!-- Advanced Settings -->
+        <div class="create-panel__advanced" id="advanced-settings">
+          <!-- Row 1: Clip parameters -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="input-topk">Number of clips</label>
+              <input type="number" class="form-input" id="input-topk" value="3" min="1" max="20">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-max-duration">Max duration (sec)</label>
+              <input type="number" class="form-input" id="input-max-duration" value="60" min="10" max="300">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-min-clip">Min clip length (sec)</label>
+              <input type="number" class="form-input" id="input-min-clip" value="15" min="5" max="120" step="0.5">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="input-target-clip">Target clip length (sec)</label>
+              <input type="number" class="form-input" id="input-target-clip" value="35" min="10" max="120" step="0.5">
+            </div>
+          </div>
+
+          <div class="separator"></div>
+
+          <!-- Row 2: Subtitle Style Picker -->
+          <div class="form-group">
+            <label class="form-label">Subtitle Style</label>
+            <div class="style-picker" id="style-picker">
+              <!-- Hormozi -->
+              <div class="style-picker__option selected" data-style="hormozi">
+                <div class="style-picker__name">Hormozi</div>
+                <div class="style-picker__desc">Bold Arial Black, yellow hooks, pop animation. Classic TikTok viral look.</div>
+                <div class="style-picker__preview" style="font-family: 'Arial Black', sans-serif; color: #fff; text-shadow: 0 0 8px rgba(0,0,0,0.8);">
+                  THIS IS <span style="color: #FFD700;">INSANE</span>
+                </div>
+              </div>
+              <!-- MrBeast -->
+              <div class="style-picker__option" data-style="mrbeast">
+                <div class="style-picker__name">MrBeast</div>
+                <div class="style-picker__desc">Impact font, heavy outline, no shadow. Maximum impact energy.</div>
+                <div class="style-picker__preview" style="font-family: Impact, sans-serif; color: #fff; text-shadow: 3px 3px 0 #000, -1px -1px 0 #000; letter-spacing: 2px;">
+                  I <span style="color: #00FF00;">SURVIVED</span>
+                </div>
+              </div>
+              <!-- Minimalist -->
+              <div class="style-picker__option" data-style="minimalist">
+                <div class="style-picker__name">Minimalist</div>
+                <div class="style-picker__desc">Clean Arial, subtle outline, professional. For business / educational clips.</div>
+                <div class="style-picker__preview" style="font-family: Arial, sans-serif; color: #e0e0e0; font-weight: 500; font-size: 0.9rem;">
+                  the real <span style="color: #fff; font-weight: 700;">secret</span> is
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Font override -->
+          <div class="form-group">
+            <label class="form-label" for="input-font">Custom font override (optional)</label>
+            <input type="text" class="form-input" id="input-font" placeholder="e.g. Montserrat, The Bold Font">
+          </div>
+
+          <div class="separator"></div>
+
+          <!-- Row 3: Toggles -->
+          <div class="form-row form-row--tight">
+            <label class="form-check">
+              <input type="checkbox" id="check-vertical" checked>
+              Vertical (9:16) crop
+            </label>
+            <label class="form-check">
+              <input type="checkbox" id="check-face" checked>
+              Face tracking bias
+            </label>
+            <label class="form-check">
+              <input type="checkbox" id="check-heatmap" checked>
+              YouTube heatmap
+            </label>
+            <label class="form-check">
+              <input type="checkbox" id="check-upload">
+              Auto-upload to YT
+            </label>
+          </div>
+
+          <!-- YouTube privacy -->
+          <div class="form-row" id="yt-privacy-row" style="display: none;">
+            <div class="form-group">
+              <label class="form-label" for="input-privacy">YouTube privacy</label>
+              <select class="form-select" id="input-privacy">
+                <option value="unlisted">Unlisted</option>
+                <option value="private">Private</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress Panel -->
+    <div class="progress-panel mt-24" id="progress-panel">
+      <div class="card card--static">
+        <div class="flex items-center justify-between">
+          <h3 style="font-size: 1rem; font-weight: 700;">Pipeline Progress</h3>
+          <span class="badge" id="progress-status-badge">Running</span>
+        </div>
+        <div class="progress-steps" id="progress-steps">
+          <div class="progress-step" data-step="download"><span class="progress-step__dot"></span> Download</div>
+          <div class="progress-step" data-step="video_duration"><span class="progress-step__dot"></span> Duration</div>
+          <div class="progress-step" data-step="audio_extraction"><span class="progress-step__dot"></span> Audio</div>
+          <div class="progress-step" data-step="transcription"><span class="progress-step__dot"></span> Transcription</div>
+          <div class="progress-step" data-step="analysis"><span class="progress-step__dot"></span> Analysis</div>
+          <div class="progress-step" data-step="metadata"><span class="progress-step__dot"></span> Metadata</div>
+          <div class="progress-step" data-step="clip_generation"><span class="progress-step__dot"></span> Clips</div>
+          <div class="progress-step" data-step="youtube_upload"><span class="progress-step__dot"></span> Upload</div>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        </div>
+        <div class="progress-timer">
+          Elapsed: <span class="progress-timer__value" id="progress-elapsed">--</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Clips Page ───────────────────────────────────────────────── -->
+  <div class="page" id="page-clips">
+    <div class="page__header">
+      <div>
+        <h1 class="page__title">My Clips</h1>
+        <p class="page__subtitle" id="clips-count">Loading clips...</p>
+      </div>
+      <button class="btn btn--secondary" id="btn-refresh-clips">
+        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+
+    <div class="clip-grid" id="clip-grid">
+      <!-- Clips are injected via JS -->
+    </div>
+
+    <div class="empty-state" id="clips-empty" style="display: none;">
+      <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+      <div class="empty-state__title">No clips yet</div>
+      <div class="empty-state__desc">Create your first clip from the Create page to see it here.</div>
+    </div>
+  </div>
+
+  <!-- ─── Status Page ──────────────────────────────────────────────── -->
+  <div class="page" id="page-status">
+    <div class="page__header">
+      <div>
+        <h1 class="page__title">Pipeline Status</h1>
+        <p class="page__subtitle">Metrics, performance, and system logs</p>
+      </div>
+      <button class="btn btn--secondary" id="btn-refresh-status">
+        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Refresh
+      </button>
+    </div>
+
+    <!-- Metrics Cards -->
+    <div class="metrics-grid" id="metrics-grid">
+      <div class="card card--static metric-card">
+        <div class="metric-card__label">Total Runs</div>
+        <div class="metric-card__value accent" id="metric-runs">—</div>
+      </div>
+      <div class="card card--static metric-card">
+        <div class="metric-card__label">Failures</div>
+        <div class="metric-card__value danger" id="metric-failures">—</div>
+      </div>
+      <div class="card card--static metric-card">
+        <div class="metric-card__label">Last Run Duration</div>
+        <div class="metric-card__value success" id="metric-duration">—</div>
+      </div>
+      <div class="card card--static metric-card">
+        <div class="metric-card__label">Last Status</div>
+        <div class="metric-card__value" id="metric-last-status">—</div>
+      </div>
+    </div>
+
+    <!-- Step Performance -->
+    <div class="card card--static mb-16">
+      <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 4px;">Step Performance</h3>
+      <p class="text-secondary" style="font-size: 0.82rem; margin-bottom: 12px;">Duration breakdown of the last pipeline run</p>
+      <div class="steps-timeline" id="steps-timeline">
+        <div class="text-muted" style="font-size: 0.85rem; padding: 12px;">No run data available yet.</div>
+      </div>
+    </div>
+
+    <!-- Logs Panel -->
+    <div class="card card--static">
+      <div class="flex items-center justify-between mb-16">
+        <div>
+          <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 4px;">System Logs</h3>
+          <p class="text-secondary" style="font-size: 0.82rem;">Last 100 lines from the pipeline log</p>
+        </div>
+        <button class="btn btn--ghost btn--sm" id="btn-refresh-logs">
+          <svg viewBox="0 0 24 24" style="width:14px;height:14px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Reload
+        </button>
+      </div>
+      <div class="log-viewer" id="log-viewer">
+        <div class="text-muted">Loading logs...</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-shell -->
+
+<!-- ═══ Video Preview Modal ═══ -->
+<div class="modal-backdrop video-modal" id="video-modal">
+  <div class="modal">
+    <div class="modal__header">
+      <span class="modal__title" id="video-modal-title">Preview</span>
+      <button class="btn btn--ghost btn--icon" id="video-modal-close">
+        <svg viewBox="0 0 24 24" style="width:18px;height:18px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal__body">
+      <video controls id="video-modal-player"></video>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Delete Confirmation Modal ═══ -->
+<div class="modal-backdrop" id="delete-modal">
+  <div class="modal">
+    <div class="modal__header">
+      <span class="modal__title">Delete Clip</span>
+      <button class="btn btn--ghost btn--icon" onclick="closeModal('delete-modal')">
+        <svg viewBox="0 0 24 24" style="width:18px;height:18px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal__body">
+      <p style="font-size: 0.9rem;">Are you sure you want to delete <strong id="delete-clip-name"></strong>? This action cannot be undone.</p>
+    </div>
+    <div class="modal__footer">
+      <button class="btn btn--ghost" onclick="closeModal('delete-modal')">Cancel</button>
+      <button class="btn btn--danger" id="btn-confirm-delete">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Toasts ═══ -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
