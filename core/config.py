@@ -43,6 +43,10 @@ class PipelineConfig:
     whisper_compute_type: str = "float16" # float16, int8_float16, int8
     llm_device: str = "cpu"
     
+    # Groq API Fallback
+    groq_api_key: Optional[str] = os.environ.get("GROQ_API_KEY")
+    groq_model_id: str = "llama-3.3-70b-versatile"
+    
     # Analysis Parameters
     hook_keywords: List[str] = field(default_factory=lambda: [
         "insane", "crazy", "secret", "shocking", "impossible",

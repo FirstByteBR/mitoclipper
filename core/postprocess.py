@@ -12,39 +12,38 @@ from core.config import cfg
 from core.subtitle_styles import get_style
 from core.utils import ffmpeg_escape_path, sanitize_ass_text
 
+import mediapipe as mp
+import pysubs2
+
 class FaceDetector:
-    def __init__(self, model_path="models/face_detection_short_range.tflite"):
-        self.net = None
-        if os.path.exists(model_path):
-            try:
-                self.net = cv2.dnn.readNetFromTFLite(model_path)
-                logger.info("Face detector loaded from %s", model_path)
-            except Exception as e:
-                logger.warning("Failed to load face detector from %s: %s", model_path, e)
+    def __init__(self):
+        self.mp_face_detection = mp.solutions.face_detection
+        self.face_detection = self.mp_face_detection.FaceDetection(
+            model_selection=1, # 1 for far range (better for varied distances)
+            min_detection_confidence=0.5
+        )
+        logger.info("MediaPipe Face detector initialized")
 
     def detect_face_center(self, frame):
         """Returns the X-coordinate (normalized 0-1) of the most prominent face."""
         h, w = frame.shape[:2]
         
-        # Fallback to Haar Cascades (standard OpenCV, very reliable for this use case)
-        # TFLite parsing for BlazeFace in cv2.dnn can be extremely complex without MediaPipe
-        # So we use Haar as a reliable baseline for "Back-end Enhancements"
-        try:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            # Use a slightly smaller scale for speed
-            small_gray = cv2.resize(gray, (0,0), fx=0.5, fy=0.5)
-            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-            faces = face_cascade.detectMultiScale(small_gray, 1.2, 3)
+        # Convert BGR to RGB for MediaPipe
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.face_detection.process(rgb_frame)
+        
+        if results.detections:
+            # Find the detection with the largest bounding box area
+            def get_area(det):
+                bbox = det.location_data.relative_bounding_box
+                return bbox.width * bbox.height
             
-            if len(faces) > 0:
-                # Find the largest face (closest to camera)
-                largest_face = max(faces, key=lambda f: f[2] * f[3])
-                fx, fy, fw, fh = largest_face
-                # Adjust for 0.5x scaling
-                center_x = (fx + fw/2) * 2
-                return float(center_x / w)
-        except Exception as e:
-            logger.debug("Haar detection failed: %s", e)
+            best_det = max(results.detections, key=get_area)
+            bbox = best_det.location_data.relative_bounding_box
+            
+            # Center X of the bounding box
+            center_x = bbox.xmin + (bbox.width / 2.0)
+            return float(center_x)
             
         return 0.5
 
@@ -228,75 +227,79 @@ def _build_vf(subtitle_path, vertical=True, bias=0.5):
     return f"ass={ass}"
 
 
+
 def gerar_legenda(segmentos, output_path):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     words = _flatten_words(segmentos)
     
     style_def = get_style(cfg.subtitle_style)
     # Override font if specified
-    if hasattr(cfg, 'subtitle_font') and cfg.subtitle_font:
-        style_def.fontname = cfg.subtitle_font
-        
-    style_name = style_def.name
+    font = cfg.subtitle_font if hasattr(cfg, 'subtitle_font') and cfg.subtitle_font else style_def.fontname
     
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write("[Script Info]\n")
-        f.write("Title: MitoClipper\n")
-        f.write("ScriptType: v4.00+\n")
-        f.write("PlayResX: 1080\n")
-        f.write("PlayResY: 1920\n")
-        f.write("WrapStyle: 0\n\n")
+    # Initialize pysubs2 file
+    subs = pysubs2.SSAFile()
+    subs.info["Title"] = "MitoClipper"
+    subs.info["PlayResX"] = 1080
+    subs.info["PlayResY"] = 1920
+    subs.info["WrapStyle"] = 0
 
-        f.write("[V4+ Styles]\n")
-        f.write(
-            "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,"
-            "OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,"
-            "ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,"
-            "MarginL,MarginR,MarginV,Encoding\n"
-        )
-        f.write(style_def.generate_ass_style_header())
-        f.write("\n")
+    # Define the style
+    style = pysubs2.SSAStyle(
+        fontname=font,
+        fontsize=style_def.fontsize,
+        primarycolor=pysubs2.Color(*pysubs2.make_color(style_def.primary_color)),
+        outlinecolor=pysubs2.Color(*pysubs2.make_color(style_def.outline_color)),
+        backcolor=pysubs2.Color(*pysubs2.make_color(style_def.back_color)),
+        bold=style_def.bold != 0,
+        outline=style_def.outline,
+        shadow=style_def.shadow,
+        alignment=style_def.alignment,
+        marginl=80,
+        marginr=80,
+        marginv=style_def.margin_v,
+    )
+    subs.styles[style_def.name] = style
 
-        f.write("[Events]\n")
-        f.write(
-            "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
-        )
-
-        for chunk in _word_chunks(words, max_words=3):
-            line_start = chunk[0]["start"]
-            line_end = chunk[-1]["end"]
-            parts = []
-            for w in chunk:
-                raw = w["word"]
-                dur = max(0.1, float(w["end"]) - float(w["start"]))
-                # Karaoke timer in centiseconds
-                cs = max(8, min(120, int(dur * 100)))
-                display = sanitize_ass_text(raw).upper()
-                if not display:
-                    continue
-                    
-                is_hook = _is_hook_word(raw)
-                target_color = style_def.hook_color if is_hook else style_def.active_color
-                scx = int(style_def.hook_scale * 100) if is_hook else int(style_def.active_scale * 100)
-                scy = scx
-
-                c_tag = target_color.replace("&H00", "&H") if target_color.startswith("&H00") else target_color
-                
-                # Active word animation using \t
-                # Starts with default font settings (karaoke keeps highlight synced), 
-                # but we'll manually apply color and scale when word is hit
-                parts.append(
-                    f"{{\\k{cs}}}{{\\c{c_tag}&\\fscx{scx}\\fscy{scy}\\t(0,50,\\fscx100\\fscy100)}}"
-                    f"{display}{{\\r}}"
-                )
-
-            if not parts:
+    for chunk in _word_chunks(words, max_words=3):
+        line_start = int(chunk[0]["start"] * 1000) # ms
+        line_end = int(chunk[-1]["end"] * 1000)
+        
+        parts = []
+        for w in chunk:
+            raw = w["word"]
+            dur = max(0.1, float(w["end"]) - float(w["start"]))
+            cs = max(8, min(120, int(dur * 100))) # centiseconds for \k
+            
+            display = sanitize_ass_text(raw).upper()
+            if not display:
                 continue
-            text = " ".join(parts)
-            f.write(
-                f"Dialogue: 0,{_ass_time(line_start)},{_ass_time(line_end)},{style_name},,0,0,0,,{text}\n"
+                
+            is_hook = _is_hook_word(raw)
+            target_color = style_def.hook_color if is_hook else style_def.active_color
+            scx = int(style_def.hook_scale * 100) if is_hook else int(style_def.active_scale * 100)
+            
+            # SSA color format handling
+            c_tag = target_color.replace("&H00", "&H") if target_color.startswith("&H00") else target_color
+            
+            # Active word animation using \t
+            parts.append(
+                f"{{\\k{cs}}}{{\\c{c_tag}&\\fscx{scx}\\fscy{scx}\\t(0,50,\\fscx100\\fscy100)}}"
+                f"{display}{{\\r}}"
             )
 
+        if not parts:
+            continue
+            
+        line_text = " ".join(parts)
+        event = pysubs2.SSAEvent(
+            start=line_start,
+            end=line_end,
+            text=line_text,
+            style=style_def.name
+        )
+        subs.append(event)
+
+    subs.save(output_path)
     return output_path
 
 

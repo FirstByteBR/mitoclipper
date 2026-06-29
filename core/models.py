@@ -3,6 +3,7 @@ import torch
 from faster_whisper import WhisperModel
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
+from groq import Groq
 
 from core.logging_config import logger
 from core.config import cfg
@@ -13,6 +14,7 @@ class Models:
     embeddings = None
     emotion = None
     whisper_model = None
+    groq_client = None
 
 
 def _get_torch_device():
@@ -22,6 +24,15 @@ def _get_torch_device():
 
 
 def get_llm():
+    """Returns either a Groq client or a local transformer pipeline."""
+    # Check for Groq first if API key is provided
+    if cfg.groq_api_key:
+        if Models.groq_client is None:
+            logger.info("Using Groq API for LLM tasks (model: %s)", cfg.groq_model_id)
+            Models.groq_client = Groq(api_key=cfg.groq_api_key)
+        return Models.groq_client
+
+    # Fallback to local model
     if Models.llm is None:
         model_id = cfg.llm_model_id
         device_str = cfg.llm_device
@@ -34,14 +45,14 @@ def get_llm():
             device = -1
             dtype = None
 
-        logger.info("Loading LLM model %s on device=%s", model_id, device_str)
+        logger.info("Loading LOCAL LLM model %s on device=%s", model_id, device_str)
         
         kwargs = {"model": model_id, "device": device}
         if dtype:
             kwargs["torch_dtype"] = dtype
             
         Models.llm = pipeline("text-generation", **kwargs)
-        logger.info("LLM model loaded")
+        logger.info("Local LLM model loaded")
     return Models.llm
 
 

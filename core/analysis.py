@@ -338,23 +338,43 @@ Transcript (relevant excerpts):
     if len(prompt) > cfg.llm_max_prompt_chars:
         prompt = prompt[:cfg.llm_max_prompt_chars] + "\n[...truncated...]"
 
-    pipe = get_llm()
-    tokenizer = pipe.tokenizer
-    pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
-
-    out = pipe(
-        prompt,
-        max_new_tokens=512,
-        do_sample=False,
-        pad_token_id=pad_id,
-        return_full_text=False,
-    )
+    llm_instance = get_llm()
     
-    generated = ""
-    if isinstance(out, list) and out:
-        generated = out[0].get("generated_text", "")
+    # Check if we are using Groq (Groq client) or local pipeline
+    if hasattr(llm_instance, "chat") and cfg.groq_api_key:
+        # Groq API path
+        try:
+            chat_completion = llm_instance.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are a viral content specialist. Return ONLY valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=cfg.groq_model_id,
+                temperature=0.2,
+                max_tokens=1024,
+            )
+            generated = chat_completion.choices[0].message.content
+        except Exception as e:
+            logger.error("Groq metadata generation failed: %s", e)
+            generated = ""
     else:
-        generated = str(out)
+        # Local model path
+        pipe = llm_instance
+        tokenizer = pipe.tokenizer
+        pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+
+        out = pipe(
+            prompt,
+            max_new_tokens=512,
+            do_sample=False,
+            pad_token_id=pad_id,
+            return_full_text=False,
+        )
+        
+        if isinstance(out, list) and out:
+            generated = out[0].get("generated_text", "")
+        else:
+            generated = str(out)
         
     logger.info("Metadata generated, length=%d", len(generated))
     return generated
