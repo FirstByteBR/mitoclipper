@@ -54,6 +54,22 @@ def _youtube_id_from_url(url):
     return m.group(1) if m else None
 
 
+def _find_heat_markers(data):
+    if isinstance(data, dict):
+        if "heatMarkers" in data:
+            return data["heatMarkers"]
+        for k, v in data.items():
+            res = _find_heat_markers(v)
+            if res is not None:
+                return res
+    elif isinstance(data, list):
+        for item in data:
+            res = _find_heat_markers(item)
+            if res is not None:
+                return res
+    return None
+
+
 def get_heatmap(video_id):
     """Fetch YouTube heatmap data by scraping the video page."""
     url = f"https://www.youtube.com/watch?v={video_id}"
@@ -66,9 +82,17 @@ def get_heatmap(video_id):
         match = re.search(r'ytInitialPlayerResponse\s*=\s*({.+?});', response.text)
         if match:
             data = json.loads(match.group(1))
-            heat_map = data.get('videoDetails', {}).get('heatMap')
-            if heat_map:
-                return heat_map
+            markers = _find_heat_markers(data)
+            if markers:
+                result = []
+                for marker in markers:
+                    renderer = marker.get("heatMarkerRenderer", {})
+                    intensity = renderer.get("intensityScoreNormalized", 0.0)
+                    start_ms = marker.get("timeRangeStartMillis", 0)
+                    dur_ms = marker.get("markerDurationMillis", 0)
+                    time_sec = (start_ms + dur_ms / 2.0) / 1000.0
+                    result.append({"time": time_sec, "heat": float(intensity)})
+                return result
     except Exception as e:
         logger.warning("Failed to get heatmap: %s", e)
     return None

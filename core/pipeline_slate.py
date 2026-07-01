@@ -3,11 +3,12 @@ class PipelineState:
     current_stage = None
     steps = {
         "download": False,
-        "audio": False,
+        "video_duration": False,
+        "audio_extraction": False,
         "transcription": False,
         "analysis": False,
-        "clips": False,
         "metadata": False,
+        "clip_generation": False,
         "youtube_upload": False,
     }
     current_video = None

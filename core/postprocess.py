@@ -12,40 +12,36 @@ from core.config import cfg
 from core.subtitle_styles import get_style
 from core.utils import ffmpeg_escape_path, sanitize_ass_text
 
-import mediapipe as mp
 import pysubs2
+from pysubs2.formats.substation import rgba_to_color
+
+# Face detection via OpenCV Haar cascade (ships with opencv-python, no extra download needed)
+_HAAR_CASCADE_PATH = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+
 
 class FaceDetector:
     def __init__(self):
-        self.mp_face_detection = mp.solutions.face_detection
-        self.face_detection = self.mp_face_detection.FaceDetection(
-            model_selection=1, # 1 for far range (better for varied distances)
-            min_detection_confidence=0.5
-        )
-        logger.info("MediaPipe Face detector initialized")
+        self.cascade = cv2.CascadeClassifier(_HAAR_CASCADE_PATH)
+        if self.cascade.empty():
+            raise RuntimeError("Could not load Haar cascade for face detection.")
+        logger.info("OpenCV Haar cascade face detector initialized")
 
     def detect_face_center(self, frame):
         """Returns the X-coordinate (normalized 0-1) of the most prominent face."""
         h, w = frame.shape[:2]
-        
-        # Convert BGR to RGB for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.face_detection.process(rgb_frame)
-        
-        if results.detections:
-            # Find the detection with the largest bounding box area
-            def get_area(det):
-                bbox = det.location_data.relative_bounding_box
-                return bbox.width * bbox.height
-            
-            best_det = max(results.detections, key=get_area)
-            bbox = best_det.location_data.relative_bounding_box
-            
-            # Center X of the bounding box
-            center_x = bbox.xmin + (bbox.width / 2.0)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
+        if len(faces) > 0:
+            # Pick the largest face
+            areas = [fw * fh for (fx, fy, fw, fh) in faces]
+            idx = int(np.argmax(areas))
+            fx, fy, fw, fh = faces[idx]
+            center_x = (fx + fw / 2.0) / w
             return float(center_x)
-            
         return 0.5
+
 
 _face_detector = None
 
@@ -173,54 +169,86 @@ def _word_chunks(words, max_words=3):
         yield words[i : i + max_words]
 
 
-def face_horizontal_bias(video_path, t_start, duration, samples=6):
+def face_dynamic_crop_expr(video_path, t_start, duration, sample_interval=1.0):
     """
-    Analyzes several frames from the video segment to find the dominant face
-    and returns its average horizontal position (0-1).
+    Samples the video at regular intervals and detects the face center in each sample.
+    Applies EMA smoothing and returns a single averaged crop x-coordinate as an integer
+    string, which is safe to embed in any FFmpeg filter chain.
+
+    NOTE: We previously used a piecewise if(lt(t,...)) expression for per-frame
+    interpolation, but FFmpeg 6.x's filter-chain parser splits on commas inside
+    function calls when they appear in crop= parameters, causing 'No such filter'
+    errors.  A per-clip average is simpler, crash-proof, and still much better than
+    a blind center crop.
     """
     global _face_detector
     if _face_detector is None:
-        _face_detector = FaceDetector()
-        
+        try:
+            _face_detector = FaceDetector()
+        except Exception as e:
+            logger.warning("FaceDetector init failed (%s) – falling back to center crop", e)
+            return "iw/2-540"
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        return 0.5
-        
+        return "iw/2-540"
+
     fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0: fps = 30.0
+    if fps <= 0:
+        fps = 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    start_frame = int(t_start * fps)
-    end_frame = int((t_start + duration) * fps)
-    
-    # Sample frames across the duration
-    frame_indices = np.linspace(start_frame, min(end_frame, total_frames - 1), samples, dtype=int)
-    
+
+    iw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    ih = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Scaled width after scale=1080:1920:force_original_aspect_ratio=increase
+    scale_factor = max(1080 / iw, 1920 / ih) if iw > 0 and ih > 0 else 1.0
+    iw_scaled = iw * scale_factor
+
+    # Sample every sample_interval seconds
+    timestamps = np.arange(0, duration, sample_interval)
+    if len(timestamps) == 0:
+        cap.release()
+        return "iw/2-540"
+
     positions = []
-    for idx in frame_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+    for t in timestamps:
+        frame_idx = int((t_start + t) * fps)
+        if frame_idx >= total_frames:
+            frame_idx = max(0, total_frames - 1)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
         if not ret:
+            positions.append(positions[-1] if positions else 0.5)
             continue
         pos = _face_detector.detect_face_center(frame)
         positions.append(pos)
-        
+
     cap.release()
-    
+
     if not positions:
-        return 0.5
-        
-    # Return average but weight more towards the center if detections are scattered
-    return float(np.mean(positions))
+        return "iw/2-540"
+
+    # EMA smoothing
+    alpha = 0.35
+    smoothed = positions[0]
+    for p in positions[1:]:
+        smoothed = alpha * p + (1.0 - alpha) * smoothed
+
+    # Convert to pixel offset and clamp
+    crop_x = iw_scaled * smoothed - 540
+    crop_x = max(0.0, min(iw_scaled - 1080.0, crop_x))
+    logger.info("Face-tracked crop x=%.1f (face center=%.2f, scaled_w=%.1f)", crop_x, smoothed, iw_scaled)
+    return str(int(round(crop_x)))
 
 
-def _build_vf(subtitle_path, vertical=True, bias=0.5):
+
+def _build_vf(subtitle_path, vertical=True, crop_x_val="int((iw-1080)*0.5)"):
     ass = ffmpeg_escape_path(subtitle_path)
-    b = min(1.0, max(0.0, float(bias)))
     if vertical:
         return (
             f"scale=1080:1920:force_original_aspect_ratio=increase,"
-            f"crop=1080:1920:(iw-1080)*{b:.6f}:0,"
+            f"crop=1080:1920:{crop_x_val}:0,"
             f"format=yuv420p,"
             f"ass={ass}"
         )
@@ -247,9 +275,9 @@ def gerar_legenda(segmentos, output_path):
     style = pysubs2.SSAStyle(
         fontname=font,
         fontsize=style_def.fontsize,
-        primarycolor=pysubs2.Color(*pysubs2.make_color(style_def.primary_color)),
-        outlinecolor=pysubs2.Color(*pysubs2.make_color(style_def.outline_color)),
-        backcolor=pysubs2.Color(*pysubs2.make_color(style_def.back_color)),
+        primarycolor=rgba_to_color(style_def.primary_color),
+        outlinecolor=rgba_to_color(style_def.outline_color),
+        backcolor=rgba_to_color(style_def.back_color),
         bold=style_def.bold != 0,
         outline=style_def.outline,
         shadow=style_def.shadow,
@@ -353,12 +381,12 @@ def _process_single_clip(args):
         from core.utils import save_json
         save_json(meta_saida, clip_meta)
 
-    bias = 0.5
+    crop_x_val = "int((iw-1080)*0.5)"
 
     if vertical and face_tracking:
-        bias = face_horizontal_bias(video_path, start, end - start)
+        crop_x_val = face_dynamic_crop_expr(video_path, start, end - start)
 
-    vf = _build_vf(sub_path, vertical=vertical, bias=bias)
+    vf = _build_vf(sub_path, vertical=vertical, crop_x_val=crop_x_val)
 
     cmd = [
         "ffmpeg", "-y",
@@ -383,7 +411,7 @@ def _process_single_clip(args):
             "start": start,
             "end": end,
             "vertical": vertical,
-            "face_bias": bias if vertical else None,
+            "face_crop_expr": crop_x_val if vertical else None,
             "success": True
         }
     except subprocess.CalledProcessError as e:

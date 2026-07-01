@@ -23,12 +23,27 @@ class PipelineContext:
     def mark_stage(self, stage: str):
         self.current_stage = stage
         logger.info("Stage: %s", stage)
+        from core.pipeline_slate import PipelineState
+        PipelineState.current_stage = stage
+        PipelineState.status = "running"
+        stages_order = ['download', 'video_duration', 'audio_extraction', 'transcription', 'analysis', 'metadata', 'clip_generation', 'youtube_upload']
+        if stage in stages_order:
+            idx = stages_order.index(stage)
+            for i in range(idx):
+                PipelineState.mark(stages_order[i], True)
+            PipelineState.mark(stage, False)
 
     def fail(self, error_msg: str):
         self.status = "failed"
         self.error = error_msg
         logger.error("Pipeline failed: %s", error_msg)
+        from core.pipeline_slate import PipelineState
+        PipelineState.fail(error_msg)
 
     def success(self):
         self.status = "done"
         logger.info("Pipeline completed successfully")
+        from core.pipeline_slate import PipelineState
+        PipelineState.status = "done"
+        for k in PipelineState.steps:
+            PipelineState.mark(k, True)

@@ -30,13 +30,7 @@ def _heatmap_score(start, end, heatmap, video_duration):
                 nearest_h = point['heat']
         return nearest_h
     else:
-        if video_duration <= 0:
-            return 0.5
-        center = (start + end) / 2.0
-        relative = center / video_duration
-        sigma = cfg.heatmap_position_sigma
-        score = math.exp(-((relative - 0.5) ** 2) / (2 * sigma ** 2))
-        return score
+        return 0.0
 
 
 def _segment_texts(segmentos):

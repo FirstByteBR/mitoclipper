@@ -72,8 +72,11 @@ MitoClipper is built to be resilient.
 - If `MITOCLIPPER_GROQ_API_KEY` is found, it will use **Groq** for instantaneous clip titles and descriptions.
 - If no key is found, it automatically falls back to a **local Qwen2.5-1.5B** model.
 
-### Vertical Reframing
-The face tracking logic samples the video to find the most prominent speaker. It uses **MediaPipe Face Detection** to ensure the 9:16 crop always centers the action, even in dynamic multi-person videos.
+### Vertical Reframing (Dynamic Pan & Scan)
+MitoClipper features a dynamic auto-framing engine for vertical (9:16) crop generation:
+- **Precision Sampling**: Instead of static crops, it tracks face locations across time using **MediaPipe Face Detection**.
+- **EMA Smoothing**: A low-pass Exponential Moving Average (EMA) filter is applied to the raw coordinates to smooth transitions and eliminate camera jitter.
+- **FFmpeg Expression Compilation**: The smoothed motion path is compiled into a single, time-based piecewise-linear interpolation expression passed directly to FFmpeg's `crop` filter, performing smooth panning between speakers at native rendering speeds.
 
 ---
 

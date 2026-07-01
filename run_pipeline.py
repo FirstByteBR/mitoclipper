@@ -16,7 +16,7 @@ from core.preprocess import (
     transcrever,
 )
 from core.config import cfg
-from core.utils import save_json
+from core.utils import save_json, load_json
 
 
 def run(
@@ -57,32 +57,54 @@ def run(
 
         with pipeline_metrics.step("audio_extraction"):
             ctx.mark_stage("audio_extraction")
-            ctx.audio_path = extrair_audio(ctx.video_path)
+            # Derive expected audio path the same way extrair_audio does
+            video_stem = os.path.splitext(os.path.basename(ctx.video_path))[0]
+            expected_audio = os.path.join(cfg.audio_dir, f"{video_stem}.wav")
+            if os.path.isfile(expected_audio) and not kwargs.get("force"):
+                logger.info("Reusing cached audio from %s", expected_audio)
+                ctx.audio_path = expected_audio
+            else:
+                ctx.audio_path = extrair_audio(ctx.video_path)
 
         with pipeline_metrics.step("transcription"):
             ctx.mark_stage("transcription")
-            ctx.transcript = transcrever(ctx.audio_path)
-            save_json(cfg.transcript_json, ctx.transcript)
+            cached = load_json(cfg.transcript_json)
+            if cached is not None and not kwargs.get("force"):
+                logger.info("Reusing cached transcript from %s", cfg.transcript_json)
+                ctx.transcript = cached
+            else:
+                ctx.transcript = transcrever(ctx.audio_path)
+                save_json(cfg.transcript_json, ctx.transcript)
 
         with pipeline_metrics.step("analysis"):
             ctx.mark_stage("analysis")
-            ctx.viral_segments = detectar_momentos_virais(
-                segmentos=ctx.transcript,
-                audio_path=ctx.audio_path,
-                top_k=cfg.top_k,
-                max_duration=cfg.max_duration,
-                video_duration=ctx.video_duration,
-                min_clip_duration=cfg.min_clip_duration,
-                target_clip_duration=cfg.target_clip_duration,
-                heatmap=ctx.heatmap,
-            )
-            save_json(cfg.viral_segments_json, ctx.viral_segments)
+            cached = load_json(cfg.viral_segments_json)
+            if cached is not None and not kwargs.get("force"):
+                logger.info("Reusing cached viral segments from %s", cfg.viral_segments_json)
+                ctx.viral_segments = cached
+            else:
+                ctx.viral_segments = detectar_momentos_virais(
+                    segmentos=ctx.transcript,
+                    audio_path=ctx.audio_path,
+                    top_k=cfg.top_k,
+                    max_duration=cfg.max_duration,
+                    video_duration=ctx.video_duration,
+                    min_clip_duration=cfg.min_clip_duration,
+                    target_clip_duration=cfg.target_clip_duration,
+                    heatmap=ctx.heatmap,
+                )
+                save_json(cfg.viral_segments_json, ctx.viral_segments)
 
         with pipeline_metrics.step("metadata"):
             ctx.mark_stage("metadata")
-            metadados_raw = gerar_metadados(ctx.transcript, ctx.viral_segments)
-            ctx.metadata = {"raw": metadados_raw, "parsed": parse_generated_metadata(metadados_raw)}
-            save_json(cfg.generated_metadata_json, ctx.metadata)
+            cached = load_json(cfg.generated_metadata_json)
+            if cached is not None and not kwargs.get("force"):
+                logger.info("Reusing cached metadata from %s", cfg.generated_metadata_json)
+                ctx.metadata = cached
+            else:
+                metadados_raw = gerar_metadados(ctx.transcript, ctx.viral_segments)
+                ctx.metadata = {"raw": metadados_raw, "parsed": parse_generated_metadata(metadados_raw)}
+                save_json(cfg.generated_metadata_json, ctx.metadata)
 
         with pipeline_metrics.step("clip_generation"):
             ctx.mark_stage("clip_generation")
